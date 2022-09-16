@@ -7,6 +7,8 @@ import os
 import argparse
 from pathlib import Path
 import requests
+import base64
+import stat
 
 BITCOIN_CONFIG = None
 
@@ -14,8 +16,12 @@ github_repos = ['niftynei/sitzprobe',
                 'endothermicdev/impscan']
 
 RPI_JSON = """{
-"impscan":{"repository":"https://github.com/endothermicdev/impscan","entry":"impscan.py"},
-"currencyrate":{"repository":"https://github.com/lightningd/plugins","entry":"currencyrate.py","subdir":"currencyrate"}
+"impscan":{"repository":"https://github.com/endothermicdev/impscan","entry":"impscan"},
+"currencyrate":{"repository":"https://github.com/lightningd/plugins","entry":"currencyrate.py","subdir":"currencyrate"},
+"summary": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/summary", "entry": "summary.py"},
+"rebalance": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/rebalance", "entry": "rebalance.py"},
+"helpme": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/helpme", "entry": "helpme.py"},
+"noise": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/noise", "entry": "noise.py"}
 }"""
 
 # Reckless plugin index
@@ -157,12 +163,30 @@ def _install_plugin(name, repo):
         sys.exit(1)
     inst_path = os.path.join(BITCOIN_CONFIG.reckless_dir,
                              name)
-    git = Popen(['git', 'clone', repo, inst_path], stdout=PIPE)
-    git.wait()
-    if git.returncode == 0:
-        print('cloned repo to {inst_path}')
-    else:
-        print(git.stdout.read())
+    if 'api.github.com' in repo:
+        repo = repo.replace('/contents', '/git/trees/master?recursive=1')
+        repo_contents_json = requests.get(repo).json()
+        content_selected_plugin = filter(lambda element: element['path'].startswith(name), repo_contents_json['tree'])
+        for element in content_selected_plugin:
+            file_name = element['path'].split('/')[-1]
+            if element['mode'] == '040000':
+                print('Downloading into', inst_path)
+                os.makedirs(inst_path)
+            else:
+                abs_path = inst_path + '/' + file_name
+                url_response = requests.get(element['url'], allow_redirects=True)
+                decoded_file_content = base64.b64decode(url_response.json()['content']) if url_response.json()['content'] else ''
+                print('Writing content into', abs_path)
+                open(abs_path, 'wb').write(decoded_file_content)
+                if element['mode'] == '100755':
+                    os.chmod(abs_path, os.stat(abs_path).st_mode | stat.S_IEXEC)
+    elif 'github.com' in repo:    
+        git = Popen(['git', 'clone', repo, inst_path], stdout=PIPE)
+        git.wait()
+        if git.returncode == 0:
+            print('cloned repo to {inst_path}')
+        else:
+            print(git.stdout.read())
     if os.path.exists(os.path.join(inst_path, 'requirements.txt')):
         print('installing requirements from requirements.txt')
         os.chdir(inst_path)
