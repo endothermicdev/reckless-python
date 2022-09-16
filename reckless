@@ -176,8 +176,13 @@ def _install_plugin(name, repo):
     if not req.status_code == 200:
         print('plugin source repository unavailable')
         sys.exit(1)
+    clone_path = os.path.join('/tmp', name)
     inst_path = os.path.join(BITCOIN_CONFIG.reckless_dir,
                              name)
+    if os.path.exists(clone_path):
+        print(f'{clone_path} already exists - deleting')
+        shutil.rmtree(clone_path)
+    # clone repository to /tmp/<plugin>
     if 'api.github.com' in repo:
         repo = repo.replace('/contents', '/git/trees/master?recursive=1')
         repo_contents_json = requests.get(repo).json()
@@ -185,10 +190,10 @@ def _install_plugin(name, repo):
         for element in content_selected_plugin:
             file_name = element['path'].split('/')[-1]
             if element['mode'] == '040000':
-                print('Downloading into', inst_path)
+                print('Downloading into', clone_path)
                 os.makedirs(inst_path)
             else:
-                abs_path = inst_path + '/' + file_name
+                abs_path = clone_path + '/' + file_name
                 url_response = requests.get(element['url'],
                                             allow_redirects=True)
                 decoded_file_content = base64.b64decode(url_response.json()['content']) if url_response.json()['content'] else ''
@@ -198,22 +203,35 @@ def _install_plugin(name, repo):
                 if element['mode'] == '100755':
                     os.chmod(abs_path, os.stat(abs_path).st_mode | stat.S_IEXEC)
     elif 'github.com' in repo:
-        git = Popen(['git', 'clone', repo, inst_path], stdout=PIPE)
+        git = Popen(['git', 'clone', repo, clone_path], stdout=PIPE)
         git.wait()
         if git.returncode == 0:
-            print('cloned repo to {inst_path}')
+            print(f'cloned repo to {clone_path}')
         else:
             print(git.stdout.read())
-    if os.path.exists(os.path.join(inst_path, 'requirements.txt')):
+
+    # Install dependencies via requirements.txt
+    install_methods = {
+        'requirements.txt': ['pip', 'install', '-r', 'requirements.txt'],
+        'pyproject.toml': ['pip', 'install', '-e', '.']
+    }
+    for method, procedure in install_methods.items():
+        if not os.path.exists(os.path.join(clone_path, method)):
+            continue
         print('installing requirements from requirements.txt')
-        os.chdir(inst_path)
-        pip = Popen(['pip', 'install', '-r', 'requirements.txt'], stdout=PIPE)
+        os.chdir(clone_path)
+        pip = Popen(procedure, stdout=PIPE)
         pip.wait()
         if pip.returncode == 0:
             print('requirements installed successfully.')
+            break
         else:
             print(pip.stdout.read())
+    # FIXME: exhausted options?
     # FIXME: test/verify
+
+    # Find this cute little plugin a forever home
+    shutil.copytree(clone_path, inst_path)
 
 
 def install(plugin_name):
