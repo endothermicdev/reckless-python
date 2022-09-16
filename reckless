@@ -9,6 +9,7 @@ from pathlib import Path
 import requests
 import base64
 import stat
+import shutil
 
 BITCOIN_CONFIG = None
 
@@ -28,23 +29,37 @@ RPI_JSON = """{
 rpi = json.loads(RPI_JSON)  # replace with a file once this is working.
 
 
+def create_dir(r, d):
+    """Creation of a directory at path `d` with a maximum new dir depth `r`"""
+    if os.path.exists(d):
+        return True
+    elif r <= 0:
+        return False
+    elif create_dir(r-1, os.path.split(d)[0]):
+        os.mkdir(d, 0o777)
+        print(f'created directory {d}')
+        if os.path.exists(d):
+            return True
+
+
+def remove_dir(target):
+    try:
+        # os.removedirs(target)
+        shutil.rmtree(target)
+        return True
+    except NotADirectoryError:
+        print(f"Tried to remove directory {target} that does not exist.")
+    except PermissionError:
+        print(f"Permission denied removing dir: {target}")
+    return False
+
+
 class config(object):
     def new_plugins_conf(self, path):
         # config = configparser.ConfigParser()
         config = '# This configuration file is managed by reckless to' +\
                  ' activate and disable\n# reckless-installed plugins\n'
         return config
-
-    def create_dir(self, r, d):
-        if os.path.exists(d):
-            return True
-        elif r <= 0:
-            return False
-        elif self.create_dir(r-1, os.path.split(d)[0]):
-            os.mkdir(d, 0o777)
-            print(f'created directory {d}')
-            if os.path.exists(d):
-                return True
 
     def obtain_config(self, config_path):
         """Return a config file from the desired location. Create one if it
@@ -58,7 +73,7 @@ class config(object):
             return config_content
         parent_path = os.path.split(config_path)[0]
         # Create up to one parent in the directory tree.
-        if self.create_dir(1, parent_path):
+        if create_dir(1, parent_path):
             print(f'ready to populate conf file in {parent_path}')
             BITCOIN_CONFIG = self.new_plugins_conf(config_path)
             with open(self.conf_fp, 'w') as f:
@@ -174,13 +189,15 @@ def _install_plugin(name, repo):
                 os.makedirs(inst_path)
             else:
                 abs_path = inst_path + '/' + file_name
-                url_response = requests.get(element['url'], allow_redirects=True)
+                url_response = requests.get(element['url'],
+                                            allow_redirects=True)
                 decoded_file_content = base64.b64decode(url_response.json()['content']) if url_response.json()['content'] else ''
                 print('Writing content into', abs_path)
+                print(type(decoded_file_content))
                 open(abs_path, 'wb').write(decoded_file_content)
                 if element['mode'] == '100755':
                     os.chmod(abs_path, os.stat(abs_path).st_mode | stat.S_IEXEC)
-    elif 'github.com' in repo:    
+    elif 'github.com' in repo:
         git = Popen(['git', 'clone', repo, inst_path], stdout=PIPE)
         git.wait()
         if git.returncode == 0:
@@ -216,12 +233,17 @@ def install(plugin_name):
         # FIXME: Go ahead and dynamically activate?
 
 
-def remove(plugin_name):
-    """reckless remove <plugin>
-    uninstalls plugin"""
+def uninstall(plugin_name):
+    """reckless uninstall <plugin>
+    disables plugin and deletes the plugin's reckless dir"""
     if plugin_name is not None:
         # FIXME: Do something here.
-        print('removing plugin {}'.format(plugin_name))
+        print('Uninstalling plugin {}'.format(plugin_name))
+        disable(plugin_name)
+        plugin_dir = os.path.join(BITCOIN_CONFIG.reckless_dir, plugin_name)
+        print("looking for {}".format(plugin_dir))
+        if remove_dir(plugin_dir):
+            print(f"{plugin_name} uninstalled successfully.")
 
 
 def search(plugin_name):
@@ -246,6 +268,7 @@ def update(plugin_name):
     if plugin_name is not None:
         # print('updating plugin {}'.format(sys.argv[2]))
         print('updating plugin {}'.format(plugin_name))
+        # FIXME: do something.
 
 
 def enable(plugin_name):
@@ -300,7 +323,7 @@ def disable(plugin_name):
         sys.exit(clncli.returncode)
     BITCOIN_CONFIG.disable_plugin(path)
     print(f'{plugin_name} disabled')
-    sys.exit(0)
+    # sys.exit(0)
 
 
 # FIXME pass config in here if passed by argument.
@@ -316,7 +339,7 @@ def loadConfig():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument(dest='command', help='install/remove/search/update',
+    parser.add_argument(dest='command', help='install/uninstall/search/update',
                         type=str)
     parser.add_argument(dest='target', nargs='?', default=None, help='target',
                         type=str)
@@ -330,7 +353,7 @@ if __name__ == '__main__':
 
     if hasattr(args, 'command'):
         # FIXME: Check for config file passed by option and load it here.
-        if args.command in ['install', 'remove', 'search', 'update',
+        if args.command in ['install', 'uninstall', 'search', 'update',
                             'enable', 'disable', 'help']:
             BITCOIN_CONFIG = loadConfig()
             globals()[args.command](args.target)
