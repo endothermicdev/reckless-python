@@ -29,6 +29,52 @@ RPI_JSON = """{
 rpi = json.loads(RPI_JSON)  # replace with a file once this is working.
 
 
+class inst_info:
+    def __init__(self, name, url, git_url):
+        self.name = name
+        self.repo = url
+        self.git_url = git_url
+        self.entry = None
+        self.deps = None
+        self.subdir = None
+
+    def __repr__(self):
+        return f'name: {self.name}\nrepo: {self.repo}\ngit: {self.git_url}'\
+               f'\nentry:{self.entry}\ndepency source:{self.deps}'
+
+    def get_inst_details(self):
+        """
+        Populate installation details from a github repo.
+        Return True if all data is found.
+        """
+        r = requests.get(self.git_url)
+        if r.status_code != 200:
+            return False
+        tree = r.json()['tree']
+        entry_guesses = [self.name, f'{self.name}.py', '__init__.py']
+        for g in entry_guesses:
+            for f in tree:
+                # print(f['path'])
+                if f['path'] == g:
+                    self.entry = g
+                    break
+            if self.entry is not None:
+                break
+        dependency_info = ['requirements.txt', 'pyproject.toml']
+        for d in dependency_info:
+            for f in tree:
+                if f['path'] == d:
+                    self.deps = d
+                    break
+            if self.deps is not None:
+                break
+        if not self.entry:
+            return False
+        if not self.deps:
+            return False
+        return True
+
+
 def create_dir(r, d):
     """Creation of a directory at path `d` with a maximum new dir depth `r`"""
     if os.path.exists(d):
@@ -166,27 +212,54 @@ def _search_index(name):
     return False
 
 
-def _install_plugin(name, repo):
+def _search_plugins_repo(name):
+    plugins_cont = "https://api.github.com/repos/lightningd/plugins/contents/"
+    r = requests.get(plugins_cont, timeout=5)
+    if r.status_code != 200:
+        print("Plugin repository unavailable")
+        return False
+    for x in r.json():
+        if x["name"] == name:
+            plug = {}
+            # Look for the rest of the install details
+            if 'lightningd/plugins/' in x['html_url']:
+                plug.update({'repository': 'https://github.com/'
+                             'lightningd/plugins'})
+                plug.update({'subdir': name})
+                MyPlugin = inst_info(name,
+                                     'https://github.com/lightningd/plugins',
+                                     x['git_url'])
+                MyPlugin.subdir = x['name']
+            else:
+                plug.update({'repository': x['html_url']})
+                MyPlugin = inst_info(name, x['html_url'], x['git_url'])
+            MyPlugin.get_inst_details()
+            plug.update({'entry': None})
+            return MyPlugin
+    return False
+
+
+def _install_plugin(source):
     """make sure the repo exists and clone it."""
     if BITCOIN_CONFIG is None:
         print('error: reckless install directory unavailable')
         sys.exit(2)
-    req = requests.get(repo, timeout=20)
+    req = requests.get(source.repo, timeout=20)
     print(req.status_code)
     if not req.status_code == 200:
         print('plugin source repository unavailable')
         sys.exit(1)
-    clone_path = os.path.join('/tmp', name)
+    clone_path = os.path.join('/tmp', source.name)
     inst_path = os.path.join(BITCOIN_CONFIG.reckless_dir,
-                             name)
+                             source.name)
     if os.path.exists(clone_path):
         print(f'{clone_path} already exists - deleting')
         shutil.rmtree(clone_path)
     # clone repository to /tmp/<plugin>
-    if 'api.github.com' in repo:
-        repo = repo.replace('/contents', '/git/trees/master?recursive=1')
+    if 'api.github.com' in source.repo:
+        repo = source.repo.replace('/contents', '/git/trees/master?recursive=1')
         repo_contents_json = requests.get(repo).json()
-        content_selected_plugin = filter(lambda element: element['path'].startswith(name), repo_contents_json['tree'])
+        content_selected_plugin = filter(lambda element: element['path'].startswith(source.name), repo_contents_json['tree'])
         for element in content_selected_plugin:
             file_name = element['path'].split('/')[-1]
             if element['mode'] == '040000':
@@ -202,8 +275,8 @@ def _install_plugin(name, repo):
                 open(abs_path, 'wb').write(decoded_file_content)
                 if element['mode'] == '100755':
                     os.chmod(abs_path, os.stat(abs_path).st_mode | stat.S_IEXEC)
-    elif 'github.com' in repo:
-        git = Popen(['git', 'clone', repo, clone_path], stdout=PIPE)
+    elif 'github.com' in source.repo:
+        git = Popen(['git', 'clone', source.repo, clone_path], stdout=PIPE)
         git.wait()
         if git.returncode == 0:
             print(f'cloned repo to {clone_path}')
@@ -215,23 +288,25 @@ def _install_plugin(name, repo):
         'requirements.txt': ['pip', 'install', '-r', 'requirements.txt'],
         'pyproject.toml': ['pip', 'install', '-e', '.']
     }
-    for method, procedure in install_methods.items():
-        if not os.path.exists(os.path.join(clone_path, method)):
-            continue
-        print('installing requirements from requirements.txt')
-        os.chdir(clone_path)
+
+    print(f'installing requirements from {source.deps}')
+    plugin_path = clone_path
+    if source.subdir is not None:
+        plugin_path = os.path.join(clone_path, source.subdir)
+    os.chdir(plugin_path)
+    if source.deps is not None:
+        procedure = install_methods[source.deps]
         pip = Popen(procedure, stdout=PIPE)
         pip.wait()
         if pip.returncode == 0:
             print('requirements installed successfully.')
-            break
         else:
             print(pip.stdout.read())
-    # FIXME: exhausted options?
     # FIXME: test/verify
 
     # Find this cute little plugin a forever home
-    shutil.copytree(clone_path, inst_path)
+    shutil.copytree(plugin_path, inst_path)
+    # FIXME: Maybe cleanup clone_path?
 
 
 def install(plugin_name):
@@ -239,14 +314,14 @@ def install(plugin_name):
     downloads plugin from source repos and installs plugin"""
     if plugin_name is None:
         print('missing argument: plugin_name')
-    source = _search_index(plugin_name)
+    source = _search_plugins_repo(plugin_name)
     if source:
         print('Retrieving {} from {}'.format(plugin_name,
-                                             source['repository']))
-        _install_plugin(plugin_name, source['repository'])
+                                             source.repo))
+        _install_plugin(source)
         inst_path = os.path.join(BITCOIN_CONFIG.reckless_dir,
-                                 plugin_name,
-                                 source['entry'])
+                                 source.name,
+                                 source.entry)
         BITCOIN_CONFIG.enable_plugin(inst_path)
         # FIXME: Go ahead and dynamically activate?
 
@@ -268,13 +343,12 @@ def search(plugin_name):
     """reckless search <plugin>
     searches plugin index for plugin"""
     if plugin_name is not None:
-        print(f'searching reckless plugin index for {plugin_name}')
-        r = _search_index(plugin_name)
-        if r:
-            print(f"found plugin repo:\n{r['repository']}")
-            print(f"entry: {r['entry']}")
-            if 'subdir' in r.keys():
-                print(f'subdirectory: {r["subdir"]}')
+        p = _search_plugins_repo(plugin_name)
+        if p:
+            print(f"found plugin repo:\n{p.repo}")
+            print(f"entry: {p.entry}")
+            if p.subdir:
+                print(f'sub-directory: {p.subdir}')
         else:
             print(f'{plugin_name} not found.')
 
@@ -324,7 +398,7 @@ def disable(plugin_name):
                         plugin_name,
                         rpi[plugin_name]['entry'])
     if not os.path.exists(path):
-        sys.stderr.write('Could not find plugin at {}'.format(path))
+        sys.stderr.write(f'Could not find plugin at {path}\n')
         sys.exit(1)
     clncli = Popen(['lightning-cli', 'plugin', 'stop',
                     rpi[plugin_name]['entry']],
@@ -341,7 +415,6 @@ def disable(plugin_name):
         sys.exit(clncli.returncode)
     BITCOIN_CONFIG.disable_plugin(path)
     print(f'{plugin_name} disabled')
-    # sys.exit(0)
 
 
 # FIXME pass config in here if passed by argument.
@@ -375,6 +448,7 @@ if __name__ == '__main__':
                             'enable', 'disable', 'help']:
             BITCOIN_CONFIG = loadConfig()
             globals()[args.command](args.target)
+            sys.exit(0)
         elif args.command == 'firstrun':
             loadConfig()
         else:
