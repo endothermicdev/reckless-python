@@ -11,7 +11,7 @@ import base64
 import stat
 import shutil
 
-BITCOIN_CONFIG = None
+# RECKLESS_CONFIG = None
 
 github_repos = ['niftynei/sitzprobe',
                 'endothermicdev/impscan']
@@ -27,6 +27,9 @@ RPI_JSON = """{
 
 # Reckless plugin index
 rpi = json.loads(RPI_JSON)  # replace with a file once this is working.
+
+reck_conf_txt = '# This configuration file is managed by reckless to' +\
+                ' activate and disable\n# reckless-installed plugins\n'
 
 
 class inst_info:
@@ -107,11 +110,11 @@ class config(object):
                  ' activate and disable\n# reckless-installed plugins\n'
         return config
 
-    def obtain_config(self, config_path):
-        """Return a config file from the desired location. Create one if it
-        cannot be found."""
-        print(f'config requested with path: \"{config_path}\"')
-        # FIXME: warn reckless dir exists, but conf not found
+    def obtain_config(self, config_path, default_text):
+        """Return a config file from the desired location. Create one with
+        default_text if it cannot be found."""
+        # print(f'config requested with path: \"{config_path}\"')
+        # FIXME: warn if reckless dir exists, but conf not found
         if os.path.exists(config_path):
             # print("found the conf file!")
             with open(config_path, 'r+') as f:
@@ -120,13 +123,11 @@ class config(object):
         parent_path = os.path.split(config_path)[0]
         # Create up to one parent in the directory tree.
         if create_dir(1, parent_path):
-            print(f'ready to populate conf file in {parent_path}')
-            BITCOIN_CONFIG = self.new_plugins_conf(config_path)
             with open(self.conf_fp, 'w') as f:
-                f.write(BITCOIN_CONFIG)
+                f.write(default_text)
                 # FIXME: Handle write failure
                 # Plugins sub-config file for the bitcoin network only
-                return BITCOIN_CONFIG
+                return default_text
         else:
             print('could not create the parent directory')
             return None
@@ -137,23 +138,25 @@ class config(object):
             original = reckless_conf.readlines()
             empty_lines = []
             for n, l in enumerate(original):
-                # print(n, ": ", l.strip())
                 if (l.strip() == removeline):
-                    # print("remove me!")
                     remove_these_lines.append(n)
                     continue
                 if (l.strip() == ''):
-                    # print("found empty line")
                     empty_lines.append(n)
                     if ((n-1) in empty_lines):
-                        # print("removing extra empty line")
+                        # The white space is getting excessive.
                         remove_these_lines.append(n)
                         continue
             with open(self.conf_fp, 'w') as conf_write:
+                line_exists = False
                 for n, l in enumerate(original):
                     if n not in remove_these_lines:
                         conf_write.write(l)
-                conf_write.write('\n{}'.format(addline))
+                        if addline == l:
+                            # addline is idempotent
+                            line_exists = True
+                if not line_exists:
+                    conf_write.write('\n{}'.format(addline))
 
     def enable_plugin(self, plugin_path):
         """Handle persistent plugin loading via config"""
@@ -187,7 +190,7 @@ class config(object):
             print('need to make a .lightning/config file')
             # Make the config file
 
-    def __init__(self, file_path=None):
+    def __init__(self, file_path=None, default_text=None):
         if file_path is not None:
             # conf_fp is the sub-config file inherited by .lightning/config
             self.conf_fp = file_path
@@ -197,8 +200,38 @@ class config(object):
             self.conf_fp = Path.home().joinpath('.lightning', 'reckless',
                                                 'reckless.conf')
             self.reckless_dir = Path.home().joinpath('.lightning', 'reckless')
-            self._check_lightning_config()
-        self.parser = self.obtain_config(self.conf_fp)
+            # self._check_lightning_config()
+        # FIXME: Just replace new_plugins_conf() with default text
+        self.content = self.obtain_config(self.conf_fp, default_text)
+
+
+class bitcoin_reckless_config(config):
+    """reckless config specific to the bitcoin network. This is inherited by
+    the main lightningd config and contains all reckless maintained plugins."""
+
+    def __init__(self, file_path=None, default_text=None):
+        if file_path is None:
+            file_path = Path.home().joinpath('.lightning', 'reckless',
+                                             'bitcoin-reckless.conf')
+        if default_text is None:
+            default_text = '# This configuration file is managed by reckles' +\
+                           's to activate and disable\n# reckless-installed' +\
+                           ' plugins\n'
+        config.__init__(self, file_path=file_path, default_text=default_text)
+
+
+class lightning_bitcoin_config(config):
+    """lightningd config specific to the bitcoin network. This is inherited by
+    the main lightningd config and in turn, inherits bitcoin-reckless.conf."""
+
+    def __init__(self, file_path=None, default_text=None):
+        if file_path is None:
+            file_path = Path.home().joinpath('.lightning', 'bitcoin',
+                                             'config')
+        if default_text is None:
+            default_text = "# This config was autopopulated by reckless\n"
+            # "\ninclude reckless/reckless.conf"
+        config.__init__(self, file_path=file_path, default_text=default_text)
 
 
 def help(target):
@@ -241,7 +274,7 @@ def _search_plugins_repo(name):
 
 def _install_plugin(source):
     """make sure the repo exists and clone it."""
-    if BITCOIN_CONFIG is None:
+    if RECKLESS_CONFIG is None:
         print('error: reckless install directory unavailable')
         sys.exit(2)
     req = requests.get(source.repo, timeout=20)
@@ -250,7 +283,7 @@ def _install_plugin(source):
         print('plugin source repository unavailable')
         sys.exit(1)
     clone_path = os.path.join('/tmp', source.name)
-    inst_path = os.path.join(BITCOIN_CONFIG.reckless_dir,
+    inst_path = os.path.join(RECKLESS_CONFIG.reckless_dir,
                              source.name)
     if os.path.exists(clone_path):
         print(f'{clone_path} already exists - deleting')
@@ -319,10 +352,10 @@ def install(plugin_name):
         print('Retrieving {} from {}'.format(plugin_name,
                                              source.repo))
         _install_plugin(source)
-        inst_path = os.path.join(BITCOIN_CONFIG.reckless_dir,
+        inst_path = os.path.join(RECKLESS_CONFIG.reckless_dir,
                                  source.name,
                                  source.entry)
-        BITCOIN_CONFIG.enable_plugin(inst_path)
+        RECKLESS_CONFIG.enable_plugin(inst_path)
         # FIXME: Go ahead and dynamically activate?
 
 
@@ -333,7 +366,7 @@ def uninstall(plugin_name):
         # FIXME: Do something here.
         print('Uninstalling plugin {}'.format(plugin_name))
         disable(plugin_name)
-        plugin_dir = os.path.join(BITCOIN_CONFIG.reckless_dir, plugin_name)
+        plugin_dir = os.path.join(RECKLESS_CONFIG.reckless_dir, plugin_name)
         print("looking for {}".format(plugin_dir))
         if remove_dir(plugin_dir):
             print(f"{plugin_name} uninstalled successfully.")
@@ -370,7 +403,7 @@ def enable(plugin_name):
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
-    path = os.path.join(BITCOIN_CONFIG.reckless_dir,
+    path = os.path.join(RECKLESS_CONFIG.reckless_dir,
                         plugin_name,
                         rpi[plugin_name]['entry'])
     # FIXME: verify we can dynamically activate (lightning rpc available)
@@ -384,7 +417,7 @@ def enable(plugin_name):
     clncli.wait()
     # print('debug only!')
     # print(clncli.stdout.read())
-    BITCOIN_CONFIG.enable_plugin(path)
+    RECKLESS_CONFIG.enable_plugin(path)
     sys.exit(clncli.returncode)
 
 
@@ -394,7 +427,7 @@ def disable(plugin_name):
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
-    path = os.path.join(BITCOIN_CONFIG.reckless_dir,
+    path = os.path.join(RECKLESS_CONFIG.reckless_dir,
                         plugin_name,
                         rpi[plugin_name]['entry'])
     if not os.path.exists(path):
@@ -413,19 +446,25 @@ def disable(plugin_name):
         print('lightning-cli plugin stop failed')
         sys.stderr.write(clncli.stderr.read().decode())
         sys.exit(clncli.returncode)
-    BITCOIN_CONFIG.disable_plugin(path)
+    RECKLESS_CONFIG.disable_plugin(path)
     print(f'{plugin_name} disabled')
 
 
 # FIXME pass config in here if passed by argument.
 def loadConfig():
     """Initial directory discovery and config file creation."""
-    loaded_config = config()
-    if not loaded_config:
-        print('config file could not be written')
-        sys.exit(0)
-    print('Success')
-    return loaded_config
+    # Reckless manages plugins here.
+    reckless_conf = bitcoin_reckless_config()
+    if not reckless_conf:
+        print('Error: reckless config file could not be written')
+        sys.exit(1)
+    # This config file inherits the bitcoin_reckless_config.
+    bc_conf = lightning_bitcoin_config()
+    if not bc_conf:
+        print('Error: could not load/create .lightning/bitcoin config')
+        sys.exit(1)
+    bc_conf.editConfigFile(f'include {reckless_conf.conf_fp}', None)
+    return reckless_conf
 
 
 if __name__ == '__main__':
@@ -446,7 +485,7 @@ if __name__ == '__main__':
         # FIXME: Check for config file passed by option and load it here.
         if args.command in ['install', 'uninstall', 'search', 'update',
                             'enable', 'disable', 'help']:
-            BITCOIN_CONFIG = loadConfig()
+            RECKLESS_CONFIG = loadConfig()
             globals()[args.command](args.target)
             sys.exit(0)
         elif args.command == 'firstrun':
