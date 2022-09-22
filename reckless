@@ -10,6 +10,7 @@ import requests
 import base64
 import stat
 import shutil
+import tempfile
 
 # RECKLESS_CONFIG = None
 
@@ -282,7 +283,9 @@ def _install_plugin(source):
     if not req.status_code == 200:
         print('plugin source repository unavailable')
         sys.exit(1)
-    clone_path = os.path.join('/tmp', source.name)
+    # Use a unique directory for each cloned repo.
+    clone_path = 'reckless-{}'.format(str(hash(os.times()))[-9:])
+    clone_path = os.path.join(tempfile.gettempdir(), clone_path)
     inst_path = os.path.join(RECKLESS_CONFIG.reckless_dir,
                              source.name)
     if os.path.exists(clone_path):
