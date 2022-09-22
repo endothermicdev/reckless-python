@@ -33,6 +33,10 @@ reck_conf_txt = '# This configuration file is managed by reckless to' +\
                 ' activate and disable\n# reckless-installed plugins\n'
 
 
+def py_entry_guesses(name):
+    return [name, f'{name}.py', '__init__.py']
+
+
 class inst_info:
     def __init__(self, name, url, git_url):
         self.name = name
@@ -201,6 +205,25 @@ class lightning_bitcoin_config(config):
             default_text = "# This config was autopopulated by reckless\n"
 
         config.__init__(self, file_path=file_path, default_text=default_text)
+
+
+class infer_install(object):
+    """Once a plugin is installed, we may need its directory and entrypoint"""
+    def __init__(self, name):
+        reck_contents = os.listdir(RECKLESS_CONFIG.reckless_dir)
+        if name[-3:] == '.py':
+            name = name[:-3]
+        if name in reck_contents:
+            self.dir = os.path.join(RECKLESS_CONFIG.reckless_dir, name)
+        else:
+            raise Exception(f"Could not find a reckless directory for {name}")
+        plug_contents = os.listdir(os.path.join(RECKLESS_CONFIG.reckless_dir,
+                                                name))
+        for n in py_entry_guesses(name):
+            if n in plug_contents:
+                self.entry = os.path.join(self.dir, n)
+                return
+        raise Exception(f'plugin entrypoint not found in {self.dir}')
 
 
 def help(target):
@@ -374,9 +397,8 @@ def enable(plugin_name):
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
-    path = os.path.join(RECKLESS_CONFIG.reckless_dir,
-                        plugin_name,
-                        rpi[plugin_name]['entry'])
+    inst = infer_install(plugin_name)
+    path = inst.entry
     # FIXME: verify we can dynamically activate (lightning rpc available)
     print('activating {}'.format(plugin_name))
     # print('using dir {}'.format(path))
@@ -398,9 +420,8 @@ def disable(plugin_name):
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
-    path = os.path.join(RECKLESS_CONFIG.reckless_dir,
-                        plugin_name,
-                        rpi[plugin_name]['entry'])
+    inst = infer_install(plugin_name)
+    path = inst.entry
     if not os.path.exists(path):
         sys.stderr.write(f'Could not find plugin at {path}\n')
         sys.exit(1)
