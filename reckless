@@ -94,7 +94,6 @@ def create_dir(r, d):
 
 def remove_dir(target):
     try:
-        # os.removedirs(target)
         shutil.rmtree(target)
         return True
     except NotADirectoryError:
@@ -105,19 +104,12 @@ def remove_dir(target):
 
 
 class config(object):
-    def new_plugins_conf(self, path):
-        # config = configparser.ConfigParser()
-        config = '# This configuration file is managed by reckless to' +\
-                 ' activate and disable\n# reckless-installed plugins\n'
-        return config
-
     def obtain_config(self, config_path, default_text):
         """Return a config file from the desired location. Create one with
         default_text if it cannot be found."""
         # print(f'config requested with path: \"{config_path}\"')
         # FIXME: warn if reckless dir exists, but conf not found
         if os.path.exists(config_path):
-            # print("found the conf file!")
             with open(config_path, 'r+') as f:
                 config_content = f.readlines()
             return config_content
@@ -127,7 +119,6 @@ class config(object):
             with open(self.conf_fp, 'w') as f:
                 f.write(default_text)
                 # FIXME: Handle write failure
-                # Plugins sub-config file for the bitcoin network only
                 return default_text
         else:
             print('could not create the parent directory')
@@ -169,46 +160,22 @@ class config(object):
         self.editConfigFile(f'disable-plugin={plugin_path}',
                             f'plugin={plugin_path}')
 
-    def _check_lightning_config(self, lightning_config=None):
-        if lightning_config is None:
-            lconf = Path.home().joinpath('.lightning', 'config')
-        else:
-            lconf = lightning_config
-        if os.path.exists(lconf):
-            print('have a .lightning/config file')
-            # Check for include
-            with open(lconf, 'r+') as conf:
-                for line in conf.readlines():
-                    if line.strip() == 'include reckless/reckless.conf':
-                        print('include verified!')
-                        return
-                print('include not found in lightning config file')
-                conf.seek(0)
-                if conf.readlines()[-1] != '\n':
-                    conf.write('\n')
-                conf.write('include reckless/reckless.conf\n')
-        else:
-            print('need to make a .lightning/config file')
-            # Make the config file
-
     def __init__(self, file_path=None, default_text=None):
         if file_path is not None:
             # conf_fp is the sub-config file inherited by .lightning/config
             self.conf_fp = file_path
-            self.reckless_dir = os.path.split(file_path)[0]
         else:
             # default file path
             self.conf_fp = Path.home().joinpath('.lightning', 'reckless',
                                                 'reckless.conf')
-            self.reckless_dir = Path.home().joinpath('.lightning', 'reckless')
             # self._check_lightning_config()
-        # FIXME: Just replace new_plugins_conf() with default text
         self.content = self.obtain_config(self.conf_fp, default_text)
 
 
-class bitcoin_reckless_config(config):
-    """reckless config specific to the bitcoin network. This is inherited by
-    the main lightningd config and contains all reckless maintained plugins."""
+class reckless_config(config):
+    """Reckless config (by default, specific to the bitcoin network only.)
+    This is inherited by the main lightningd config and contains all reckless
+    maintained plugins."""
 
     def __init__(self, file_path=None, default_text=None):
         if file_path is None:
@@ -219,6 +186,7 @@ class bitcoin_reckless_config(config):
                            's to activate and disable\n# reckless-installed' +\
                            ' plugins\n'
         config.__init__(self, file_path=file_path, default_text=default_text)
+        self.reckless_dir = os.path.split(file_path)[0]
 
 
 class lightning_bitcoin_config(config):
@@ -231,7 +199,7 @@ class lightning_bitcoin_config(config):
                                              'config')
         if default_text is None:
             default_text = "# This config was autopopulated by reckless\n"
-            # "\ninclude reckless/reckless.conf"
+
         config.__init__(self, file_path=file_path, default_text=default_text)
 
 
@@ -457,11 +425,11 @@ def disable(plugin_name):
 def loadConfig():
     """Initial directory discovery and config file creation."""
     # Reckless manages plugins here.
-    reckless_conf = bitcoin_reckless_config()
+    reckless_conf = reckless_config()
     if not reckless_conf:
         print('Error: reckless config file could not be written')
         sys.exit(1)
-    # This config file inherits the bitcoin_reckless_config.
+    # This config file inherits the reckless_config.
     bc_conf = lightning_bitcoin_config()
     if not bc_conf:
         print('Error: could not load/create .lightning/bitcoin config')
