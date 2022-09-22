@@ -279,7 +279,6 @@ def _install_plugin(source):
         print('error: reckless install directory unavailable')
         sys.exit(2)
     req = requests.get(source.repo, timeout=20)
-    print(req.status_code)
     if not req.status_code == 200:
         print('plugin source repository unavailable')
         sys.exit(1)
@@ -314,11 +313,11 @@ def _install_plugin(source):
     elif 'github.com' in source.repo:
         git = Popen(['git', 'clone', source.repo, clone_path], stdout=PIPE)
         git.wait()
-        if git.returncode == 0:
-            print(f'cloned repo to {clone_path}')
-        else:
+        if git.returncode != 0:
+            print('Error: Failed to clone repo')
             print(git.stdout.read())
-
+            remove_dir(clone_path)
+            return
     # Install dependencies via requirements.txt
     install_methods = {
         'requirements.txt': ['pip', 'install', '-r', 'requirements.txt'],
@@ -342,7 +341,8 @@ def _install_plugin(source):
 
     # Find this cute little plugin a forever home
     shutil.copytree(plugin_path, inst_path)
-    # FIXME: Maybe cleanup clone_path?
+    print(f'plugin installed: {inst_path}')
+    remove_dir(clone_path)
 
 
 def install(plugin_name):
