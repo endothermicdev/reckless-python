@@ -350,7 +350,7 @@ def install(plugin_name):
                                  source.name,
                                  source.entry)
         RECKLESS_CONFIG.enable_plugin(inst_path)
-        # FIXME: Go ahead and dynamically activate?
+        enable(plugin_name)
 
 
 def uninstall(plugin_name):
