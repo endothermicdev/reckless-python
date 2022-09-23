@@ -58,11 +58,13 @@ class inst_info:
         r = requests.get(self.git_url)
         if r.status_code != 200:
             return False
-        tree = r.json()['tree']
+        if 'git/tree' in self.git_url:
+            tree = r.json()['tree']
+        else:
+            tree = r.json()
         entry_guesses = [self.name, f'{self.name}.py', '__init__.py']
         for g in entry_guesses:
             for f in tree:
-                # print(f['path'])
                 if f['path'] == g:
                     self.entry = g
                     break
@@ -237,29 +239,53 @@ def _search_index(name):
     return False
 
 
-def _search_plugins_repo(name):
-    plugins_cont = "https://api.github.com/repos/lightningd/plugins/contents/"
+def _search_repo(name, url):
+    """look in given repo and, if found, populate inst_info"""
+    # Remove api subdomain, subdirectories, etc.
+    repo = url.split('/')
+    while '' in repo:
+        repo.remove('')
+    repo_name = None
+    for i in range(len(repo)):
+        if 'github.com' in repo[i]:
+            # Extract user and repo name
+            start = i + 1
+            if repo[start] == 'repo':
+                # Maybe we were passed an api.github.com url
+                start = start + 1
+            repo_user = repo[start]
+            repo_name = repo[start+1]
+            break
+    # FIXME: Handle non-github repos.
+    if repo_name is not None:
+        api_url = f'https://api.github.com/repos/{repo_user}/' + \
+                  f'{repo_name}/contents/'
+        print('api_url:', api_url)
+    plugins_cont = api_url
     r = requests.get(plugins_cont, timeout=5)
     if r.status_code != 200:
         print("Plugin repository unavailable")
         return False
+    # Repo is for this plugin
+    if repo_name == name:
+        MyPlugin = inst_info(name, f'https://github.com/{repo_user}/'
+                             f'{repo_name}', api_url)
+        MyPlugin.get_inst_details()
+        return MyPlugin
+    # Repo contains multiple plugins?
     for x in r.json():
         if x["name"] == name:
-            plug = {}
             # Look for the rest of the install details
+            # These are in lightningd/plugins directly
             if 'lightningd/plugins/' in x['html_url']:
-                plug.update({'repository': 'https://github.com/'
-                             'lightningd/plugins'})
-                plug.update({'subdir': name})
                 MyPlugin = inst_info(name,
                                      'https://github.com/lightningd/plugins',
                                      x['git_url'])
                 MyPlugin.subdir = x['name']
+            # submodules from another github repo
             else:
-                plug.update({'repository': x['html_url']})
                 MyPlugin = inst_info(name, x['html_url'], x['git_url'])
             MyPlugin.get_inst_details()
-            plug.update({'entry': None})
             return MyPlugin
     return False
 
@@ -339,9 +365,12 @@ def _install_plugin(source):
 def install(plugin_name):
     """reckless install <plugin>
     downloads plugin from source repos and installs plugin"""
+    plugin_name = plugin_name[0]
     if plugin_name is None:
         print('missing argument: plugin_name')
-    source = _search_plugins_repo(plugin_name)
+
+    source = _search_repo(plugin_name,
+                          "https://github.com/lightningd/plugins/")
     if source:
         print('Retrieving {} from {}'.format(plugin_name,
                                              source.repo))
@@ -356,6 +385,7 @@ def install(plugin_name):
 def uninstall(plugin_name):
     """reckless uninstall <plugin>
     disables plugin and deletes the plugin's reckless dir"""
+    plugin_name = plugin_name[0]
     if plugin_name is not None:
         # FIXME: Do something here.
         print('Uninstalling plugin {}'.format(plugin_name))
@@ -369,8 +399,13 @@ def uninstall(plugin_name):
 def search(plugin_name):
     """reckless search <plugin>
     searches plugin index for plugin"""
+    plugin_name = plugin_name[0]
     if plugin_name is not None:
-        p = _search_plugins_repo(plugin_name)
+        p = _search_repo(plugin_name, 'https://github.com/lightningd/plugins')
+        if not p:
+            print("searching again")
+            p = _search_repo(plugin_name,
+                             'https://github.com/endothermicdev/impscan')
         if p:
             print(f"found plugin repo:\n{p.repo}")
             print(f"entry: {p.entry}")
@@ -383,9 +418,9 @@ def search(plugin_name):
 def update(plugin_name):
     """reckless update <plugin>
     removes plugin and installs latest version"""
+    plugin_name = plugin_name[0]
     # if len(sys.argv) > 2:
     if plugin_name is not None:
-        # print('updating plugin {}'.format(sys.argv[2]))
         print('updating plugin {}'.format(plugin_name))
         # FIXME: do something.
 
@@ -393,7 +428,7 @@ def update(plugin_name):
 def enable(plugin_name):
     """reckless enable <plugin>
     dynamically activates plugin and adds to config (persistent)"""
-    # if len(sys.argv) > 2:
+    plugin_name = plugin_name[0]
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
@@ -417,6 +452,7 @@ def enable(plugin_name):
 def disable(plugin_name):
     """reckless disable <plugin>
     deactivates an installed plugin"""
+    plugin_name = plugin_name[0]
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
@@ -459,11 +495,58 @@ def loadConfig():
     return reckless_conf
 
 
+def loadSources():
+    # FIXME: next we'll add a flat file where we can store other git repos
+    # or local directories we would like to include in a search.
+    return ["source 1", "source 2"]
+
+
+def add_source(source):
+    """Additional git repositories, directories, etc. are passed here
+    singly."""
+    # Is it a file?
+    maybe_path = os.path.realpath(source)
+    if os.path.exists(maybe_path):
+        # FIXME: This should handle either a directory or a git repo
+        if os.path.isdir(maybe_path):
+            print(f'Plugin source directory found: {maybe_path}')
+    elif 'github.com' in source:
+        print(f'Plugin github source repo passed: {source}')
+        print(source.split('github.com/'))
+        if len(source.split('github.com/')) == 2:
+            sub = source.split('github.com/')[-1]
+            print(f'url subdirectory: {sub}')
+    # FIXME: Implement this with persistent storage
+
+
+def remove_source(source):
+    print(f"source remove called: {source}")
+    # FIXME: Implement this.
+
+
+def list_source():
+    print("source list requested")
+    # FIXME: Implement this.
+
+
+def source(cmd):
+    if cmd[0] == 'add':
+        for src in cmd[1:]:
+            add_source(src)
+    elif cmd[0] == 'remove' or cmd[0] == 'rem' or cmd[0] == 'rm':
+        for src in cmd[1:]:
+            remove_source(src)
+    elif cmd[0] == 'list':
+        list_source()
+    else:
+        print('unrecognized argument to reckless source: {cmd[0]}')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(dest='command', help='install/uninstall/search/update',
                         type=str)
-    parser.add_argument(dest='target', nargs='?', default=None, help='target',
+    parser.add_argument(dest='target', nargs='*', default=None, help='target',
                         type=str)
     parser.add_argument('-d', '--reckless-dir',
                         help='specify a data directory for reckless to use',
@@ -476,8 +559,9 @@ if __name__ == '__main__':
     if hasattr(args, 'command'):
         # FIXME: Check for config file passed by option and load it here.
         if args.command in ['install', 'uninstall', 'search', 'update',
-                            'enable', 'disable', 'help']:
+                            'enable', 'disable', 'help', 'source']:
             RECKLESS_CONFIG = loadConfig()
+            RECKLESS_SOURCES = loadSources()
             globals()[args.command](args.target)
             sys.exit(0)
         elif args.command == 'firstrun':
