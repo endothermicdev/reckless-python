@@ -7,27 +7,14 @@ import os
 import argparse
 from pathlib import Path
 import requests
-import base64
-import stat
 import shutil
 import tempfile
 
-# RECKLESS_CONFIG = None
 
-github_repos = ['niftynei/sitzprobe',
-                'endothermicdev/impscan']
+repos = ['https://github.com/lightningd/plugins',
+         'https://github.com/endothermicdev/impscan',
+         'https://github.com/niftynei/sitzprobe/']
 
-RPI_JSON = """{
-"impscan":{"repository":"https://github.com/endothermicdev/impscan","entry":"impscan"},
-"currencyrate":{"repository":"https://github.com/lightningd/plugins","entry":"currencyrate.py","subdir":"currencyrate"},
-"summary": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/summary", "entry": "summary.py"},
-"rebalance": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/rebalance", "entry": "rebalance.py"},
-"helpme": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/helpme", "entry": "helpme.py"},
-"noise": {"repository": "https://api.github.com/repos/lightningd/plugins/contents/noise", "entry": "noise.py"}
-}"""
-
-# Reckless plugin index
-rpi = json.loads(RPI_JSON)  # replace with a file once this is working.
 
 reck_conf_txt = '# This configuration file is managed by reckless to' +\
                 ' activate and disable\n# reckless-installed plugins\n'
@@ -232,13 +219,6 @@ def help(target):
     parser.print_help(sys.stdout)
 
 
-def _search_index(name):
-    for i in rpi.keys():
-        if i == name:
-            return (rpi[i])
-    return False
-
-
 def _search_repo(name, url):
     """look in given repo and, if found, populate inst_info"""
     # Remove api subdomain, subdirectories, etc.
@@ -307,27 +287,8 @@ def _install_plugin(source):
     if os.path.exists(clone_path):
         print(f'{clone_path} already exists - deleting')
         shutil.rmtree(clone_path)
-    # clone repository to /tmp/<plugin>
-    if 'api.github.com' in source.repo:
-        repo = source.repo.replace('/contents', '/git/trees/master?recursive=1')
-        repo_contents_json = requests.get(repo).json()
-        content_selected_plugin = filter(lambda element: element['path'].startswith(source.name), repo_contents_json['tree'])
-        for element in content_selected_plugin:
-            file_name = element['path'].split('/')[-1]
-            if element['mode'] == '040000':
-                print('Downloading into', clone_path)
-                os.makedirs(inst_path)
-            else:
-                abs_path = clone_path + '/' + file_name
-                url_response = requests.get(element['url'],
-                                            allow_redirects=True)
-                decoded_file_content = base64.b64decode(url_response.json()['content']) if url_response.json()['content'] else ''
-                print('Writing content into', abs_path)
-                print(type(decoded_file_content))
-                open(abs_path, 'wb').write(decoded_file_content)
-                if element['mode'] == '100755':
-                    os.chmod(abs_path, os.stat(abs_path).st_mode | stat.S_IEXEC)
-    elif 'github.com' in source.repo:
+    # clone git repository to /tmp/reckless-...
+    if ('http' in source.repo[:4]) or ('github.com' in source.repo):
         git = Popen(['git', 'clone', source.repo, clone_path], stdout=PIPE)
         git.wait()
         if git.returncode != 0:
@@ -365,12 +326,15 @@ def _install_plugin(source):
 def install(plugin_name):
     """reckless install <plugin>
     downloads plugin from source repos and installs plugin"""
+    assert isinstance(plugin_name, list)
     plugin_name = plugin_name[0]
     if plugin_name is None:
         print('missing argument: plugin_name')
 
-    source = _search_repo(plugin_name,
-                          "https://github.com/lightningd/plugins/")
+    # source = _search_repo(plugin_name,
+    #                       "https://github.com/lightningd/plugins/")
+    source = search([plugin_name])
+
     if source:
         print('Retrieving {} from {}'.format(plugin_name,
                                              source.repo))
@@ -379,17 +343,18 @@ def install(plugin_name):
                                  source.name,
                                  source.entry)
         RECKLESS_CONFIG.enable_plugin(inst_path)
-        enable(plugin_name)
+        enable([plugin_name])
 
 
 def uninstall(plugin_name):
     """reckless uninstall <plugin>
     disables plugin and deletes the plugin's reckless dir"""
+    assert isinstance(plugin_name, list)
     plugin_name = plugin_name[0]
     if plugin_name is not None:
         # FIXME: Do something here.
         print('Uninstalling plugin {}'.format(plugin_name))
-        disable(plugin_name)
+        disable([plugin_name])
         plugin_dir = os.path.join(RECKLESS_CONFIG.reckless_dir, plugin_name)
         print("looking for {}".format(plugin_dir))
         if remove_dir(plugin_dir):
@@ -400,24 +365,33 @@ def search(plugin_name):
     """reckless search <plugin>
     searches plugin index for plugin"""
     plugin_name = plugin_name[0]
-    if plugin_name is not None:
-        p = _search_repo(plugin_name, 'https://github.com/lightningd/plugins')
-        if not p:
-            print("searching again")
-            p = _search_repo(plugin_name,
-                             'https://github.com/endothermicdev/impscan')
+    if plugin_name is None:
+        print('plugin name required')
+        return None
+    ordered_repos = repos
+    for r in repos:
+        # print(r.lower().split('/'))
+        if r.split('/')[-1].lower() == plugin_name.lower():
+            ordered_repos.remove(r)
+            ordered_repos.insert(0, r)
+        # print(f"looking in repo: {r}")
+    print('search order:', ordered_repos)
+    for r in ordered_repos:
+        p = _search_repo(plugin_name, r)
+        print(f'search result: {p}')
         if p:
             print(f"found plugin repo:\n{p.repo}")
             print(f"entry: {p.entry}")
             if p.subdir:
                 print(f'sub-directory: {p.subdir}')
-        else:
-            print(f'{plugin_name} not found.')
+            return p
+    print(f'Unable to locate source for plugin {plugin_name}')
 
 
 def update(plugin_name):
     """reckless update <plugin>
     removes plugin and installs latest version"""
+    assert isinstance(plugin_name, list)
     plugin_name = plugin_name[0]
     # if len(sys.argv) > 2:
     if plugin_name is not None:
@@ -428,6 +402,7 @@ def update(plugin_name):
 def enable(plugin_name):
     """reckless enable <plugin>
     dynamically activates plugin and adds to config (persistent)"""
+    assert isinstance(plugin_name, list)
     plugin_name = plugin_name[0]
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
@@ -452,6 +427,7 @@ def enable(plugin_name):
 def disable(plugin_name):
     """reckless disable <plugin>
     deactivates an installed plugin"""
+    assert isinstance(plugin_name, list)
     plugin_name = plugin_name[0]
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
@@ -461,8 +437,7 @@ def disable(plugin_name):
     if not os.path.exists(path):
         sys.stderr.write(f'Could not find plugin at {path}\n')
         sys.exit(1)
-    clncli = Popen(['lightning-cli', 'plugin', 'stop',
-                    rpi[plugin_name]['entry']],
+    clncli = Popen(['lightning-cli', 'plugin', 'stop', path],
                    stdout=PIPE, stderr=PIPE)
     clncli.wait()
     output = json.loads(clncli.stdout.read().decode()
@@ -505,6 +480,7 @@ def add_source(source):
     """Additional git repositories, directories, etc. are passed here
     singly."""
     # Is it a file?
+    assert isinstance(source, str)
     maybe_path = os.path.realpath(source)
     if os.path.exists(maybe_path):
         # FIXME: This should handle either a directory or a git repo
@@ -520,6 +496,7 @@ def add_source(source):
 
 
 def remove_source(source):
+    assert isinstance(source, str)
     print(f"source remove called: {source}")
     # FIXME: Implement this.
 
@@ -530,6 +507,7 @@ def list_source():
 
 
 def source(cmd):
+    assert isinstance(cmd, list)
     if cmd[0] == 'add':
         for src in cmd[1:]:
             add_source(src)
@@ -546,6 +524,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(dest='command', help='install/uninstall/search/update',
                         type=str)
+    # Here we pass a list of argument in as target. This is useful for
+    # subcommands (i.e., reckless source add <repo>) as well as for passing
+    # lists of plugins to handle in sequence (to be implemented.)
     parser.add_argument(dest='target', nargs='*', default=None, help='target',
                         type=str)
     parser.add_argument('-d', '--reckless-dir',
