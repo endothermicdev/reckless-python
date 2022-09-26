@@ -368,14 +368,11 @@ def search(plugin_name):
     if plugin_name is None:
         print('plugin name required')
         return None
-    ordered_repos = repos
-    for r in repos:
-        # print(r.lower().split('/'))
+    ordered_repos = RECKLESS_SOURCES
+    for r in RECKLESS_SOURCES:
         if r.split('/')[-1].lower() == plugin_name.lower():
             ordered_repos.remove(r)
             ordered_repos.insert(0, r)
-        # print(f"looking in repo: {r}")
-    print('search order:', ordered_repos)
     for r in ordered_repos:
         p = _search_repo(plugin_name, r)
         print(f'search result: {p}')
@@ -473,7 +470,9 @@ def loadConfig():
 def loadSources():
     # FIXME: next we'll add a flat file where we can store other git repos
     # or local directories we would like to include in a search.
-    return ["source 1", "source 2"]
+    # Look for designated sources file
+    # Parse for repos
+    return repos
 
 
 def add_source(source):
@@ -538,7 +537,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if hasattr(args, 'command'):
-        # FIXME: Check for config file passed by option and load it here.
         if args.command in ['install', 'uninstall', 'search', 'update',
                             'enable', 'disable', 'help', 'source']:
             RECKLESS_CONFIG = loadConfig()
