@@ -33,7 +33,7 @@ class inst_info:
 
     def get_inst_details(self):
         """
-        Populate installation details from a github repo.
+        Populate installation details from a github repo url.
         Return True if all data is found.
         """
         r = requests.get(self.git_url)
@@ -291,7 +291,7 @@ def _install_plugin(src):
             print('Error: Failed to clone repo')
             print(git.stdout.read())
             remove_dir(clone_path)
-            return
+            return False
     # Install dependencies via requirements.txt
     install_methods = {
         'requirements.txt': ['pip', 'install', '-r', 'requirements.txt'],
@@ -310,13 +310,21 @@ def _install_plugin(src):
         if pip.returncode == 0:
             print('requirements installed successfully.')
         else:
+            print('error encountered installing dependencies')
             print(pip.stdout.read())
-    # FIXME: test/verify
+            return False
+    test = Popen([os.path.join(clone_path, src.entry)], stdout=PIPE)
+    test.wait()
+    if test.returncode != 0:
+        print('plugin testing failed')
+        print(test.stdout)
+        return False
 
     # Find this cute little plugin a forever home
     shutil.copytree(plugin_path, inst_path)
     print(f'plugin installed: {inst_path}')
     remove_dir(clone_path)
+    return True
 
 
 def install(plugin_name):
@@ -334,7 +342,9 @@ def install(plugin_name):
     if source:
         print('Retrieving {} from {}'.format(plugin_name,
                                              source.repo))
-        _install_plugin(source)
+        if not _install_plugin(source):
+            print('installation aborted')
+            sys.exit(1)
         inst_path = os.path.join(RECKLESS_CONFIG.reckless_dir,
                                  source.name,
                                  source.entry)
@@ -447,7 +457,7 @@ def disable(plugin_name):
 
 
 # FIXME pass config in here if passed by argument.
-def loadConfig():
+def load_config():
     """Initial directory discovery and config file creation."""
     # Reckless manages plugins here.
     reckless_conf = reckless_config()
@@ -568,11 +578,11 @@ if __name__ == '__main__':
     if hasattr(args, 'command'):
         if args.command in ['install', 'uninstall', 'search', 'update',
                             'enable', 'disable', 'help', 'source', 'sources']:
-            RECKLESS_CONFIG = loadConfig()
+            RECKLESS_CONFIG = load_config()
             RECKLESS_SOURCES = loadSources()
             globals()[args.command](args.target)
             sys.exit(0)
         elif args.command == 'firstrun':
-            loadConfig()
+            load_config()
         else:
             print(f'{args.command}: command unrecognized')
