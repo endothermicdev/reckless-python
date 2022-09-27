@@ -308,12 +308,12 @@ def _install_plugin(src):
         pip = Popen(procedure, stdout=PIPE)
         pip.wait()
         if pip.returncode == 0:
-            print('requirements installed successfully.')
+            print('requirements installed successfully')
         else:
             print('error encountered installing dependencies')
             print(pip.stdout.read())
             return False
-    test = Popen([os.path.join(clone_path, src.entry)], stdout=PIPE)
+    test = Popen([os.path.join(plugin_path, src.entry)], stdout=PIPE)
     test.wait()
     if test.returncode != 0:
         print('plugin testing failed')
@@ -335,19 +335,16 @@ def install(plugin_name):
     if plugin_name is None:
         print('missing argument: plugin_name')
 
-    # source = _search_repo(plugin_name,
-    #                       "https://github.com/lightningd/plugins/")
-    source = search([plugin_name])
+    src = search([plugin_name])
 
-    if source:
-        print('Retrieving {} from {}'.format(plugin_name,
-                                             source.repo))
-        if not _install_plugin(source):
+    if src:
+        print(f'Retrieving {plugin_name} from {src.repo}')
+        if not _install_plugin(src):
             print('installation aborted')
             sys.exit(1)
         inst_path = os.path.join(RECKLESS_CONFIG.reckless_dir,
-                                 source.name,
-                                 source.entry)
+                                 src.name,
+                                 src.entry)
         RECKLESS_CONFIG.enable_plugin(inst_path)
         enable([plugin_name])
 
@@ -412,17 +409,14 @@ def enable(plugin_name):
         sys.exit(1)
     inst = infer_install(plugin_name)
     path = inst.entry
-    # FIXME: verify we can dynamically activate (lightning rpc available)
+    # FIXME: verify we can dynamically activate (lightning rpc is available)
     print('activating {}'.format(plugin_name))
-    # print('using dir {}'.format(path))
     if not os.path.exists(path):
         print('cannot find installed plugin at expected path {}'
               .format(path))
         sys.exit(1)
     clncli = Popen(['lightning-cli', 'plugin', 'start', path], stdout=PIPE)
     clncli.wait()
-    # print('debug only!')
-    # print(clncli.stdout.read())
     RECKLESS_CONFIG.enable_plugin(path)
     sys.exit(clncli.returncode)
 
@@ -510,13 +504,6 @@ def add_source(src):
         if os.path.isdir(maybe_path):
             print(f'Plugin source directory found: {maybe_path}')
     elif 'github.com' in src:
-        # print(f'Plugin github source repo passed: {src}')
-        # print(src.split('github.com/'))
-        # if len(source.split('github.com/')) == 2:
-        #     sub = source.split('github.com/')[-1]
-        #     print(f'url subdirectory: {sub}')
-        #     with open(get_sources_file(), 'a+') as f:
-        #         f.write(f'\n{source}')
         my_file = Config(file_path=get_sources_file(),
                          default_text='https://github.com/lightningd/plugins')
         my_file.editConfigFile(src, None)
@@ -534,7 +521,6 @@ def remove_source(src):
 
 
 def list_source():
-    print("All plugin sources:")
     for src in sources_from_file():
         print(src)
 
@@ -551,6 +537,7 @@ def source(cmd):
         list_source()
     else:
         print('unrecognized argument to reckless source: {cmd[0]}')
+        sys.exit(1)
 
 
 def sources(cmd):
