@@ -6,18 +6,12 @@ import json
 import os
 import argparse
 from pathlib import Path
-import requests
 import shutil
 import tempfile
+import requests
 
 
-repos = ['https://github.com/lightningd/plugins',
-         'https://github.com/endothermicdev/impscan',
-         'https://github.com/niftynei/sitzprobe/']
-
-
-reck_conf_txt = '# This configuration file is managed by reckless to' +\
-                ' activate and disable\n# reckless-installed plugins\n'
+repos = ['https://github.com/lightningd/plugins']
 
 
 def py_entry_guesses(name):
@@ -96,7 +90,7 @@ def remove_dir(target):
     return False
 
 
-class config(object):
+class Config(object):
     def obtain_config(self, config_path, default_text):
         """Return a config file from the desired location. Create one with
         default_text if it cannot be found."""
@@ -123,12 +117,12 @@ class config(object):
             original = reckless_conf.readlines()
             empty_lines = []
             for n, l in enumerate(original):
-                if (l.strip() == removeline):
+                if l.strip() == removeline:
                     remove_these_lines.append(n)
                     continue
-                if (l.strip() == ''):
+                if l.strip() == '':
                     empty_lines.append(n)
-                    if ((n-1) in empty_lines):
+                    if n-1 in empty_lines:
                         # The white space is getting excessive.
                         remove_these_lines.append(n)
                         continue
@@ -136,12 +130,15 @@ class config(object):
                 line_exists = False
                 for n, l in enumerate(original):
                     if n not in remove_these_lines:
-                        conf_write.write(l)
-                        if addline == l:
+                        if n > 0:
+                            conf_write.write(f'\n{l.strip()}')
+                        else:
+                            conf_write.write(l.strip())
+                        if addline == l or addline is None:
                             # addline is idempotent
                             line_exists = True
                 if not line_exists:
-                    conf_write.write('\n{}'.format(addline))
+                    conf_write.write(f'\n{addline}')
 
     def enable_plugin(self, plugin_path):
         """Handle persistent plugin loading via config"""
@@ -165,7 +162,7 @@ class config(object):
         self.content = self.obtain_config(self.conf_fp, default_text)
 
 
-class reckless_config(config):
+class reckless_config(Config):
     """Reckless config (by default, specific to the bitcoin network only.)
     This is inherited by the main lightningd config and contains all reckless
     maintained plugins."""
@@ -178,11 +175,11 @@ class reckless_config(config):
             default_text = '# This configuration file is managed by reckles' +\
                            's to activate and disable\n# reckless-installed' +\
                            ' plugins\n'
-        config.__init__(self, file_path=file_path, default_text=default_text)
+        Config.__init__(self, file_path=file_path, default_text=default_text)
         self.reckless_dir = os.path.split(file_path)[0]
 
 
-class lightning_bitcoin_config(config):
+class lightning_bitcoin_config(Config):
     """lightningd config specific to the bitcoin network. This is inherited by
     the main lightningd config and in turn, inherits bitcoin-reckless.conf."""
 
@@ -193,7 +190,7 @@ class lightning_bitcoin_config(config):
         if default_text is None:
             default_text = "# This config was autopopulated by reckless\n"
 
-        config.__init__(self, file_path=file_path, default_text=default_text)
+        Config.__init__(self, file_path=file_path, default_text=default_text)
 
 
 class infer_install(object):
@@ -231,7 +228,7 @@ def _search_repo(name, url):
             # Extract user and repo name
             start = i + 1
             if repo[start] == 'repo':
-                # Maybe we were passed an api.github.com url
+                # Maybe we were passed an api.github.com/repo/<user> url
                 start = start + 1
             repo_user = repo[start]
             repo_name = repo[start+1]
@@ -240,7 +237,6 @@ def _search_repo(name, url):
     if repo_name is not None:
         api_url = f'https://api.github.com/repos/{repo_user}/' + \
                   f'{repo_name}/contents/'
-        print('api_url:', api_url)
     plugins_cont = api_url
     r = requests.get(plugins_cont, timeout=5)
     if r.status_code != 200:
@@ -270,12 +266,12 @@ def _search_repo(name, url):
     return False
 
 
-def _install_plugin(source):
+def _install_plugin(src):
     """make sure the repo exists and clone it."""
     if RECKLESS_CONFIG is None:
         print('error: reckless install directory unavailable')
         sys.exit(2)
-    req = requests.get(source.repo, timeout=20)
+    req = requests.get(src.repo, timeout=20)
     if not req.status_code == 200:
         print('plugin source repository unavailable')
         sys.exit(1)
@@ -283,13 +279,13 @@ def _install_plugin(source):
     clone_path = 'reckless-{}'.format(str(hash(os.times()))[-9:])
     clone_path = os.path.join(tempfile.gettempdir(), clone_path)
     inst_path = os.path.join(RECKLESS_CONFIG.reckless_dir,
-                             source.name)
+                             src.name)
     if os.path.exists(clone_path):
         print(f'{clone_path} already exists - deleting')
         shutil.rmtree(clone_path)
     # clone git repository to /tmp/reckless-...
-    if ('http' in source.repo[:4]) or ('github.com' in source.repo):
-        git = Popen(['git', 'clone', source.repo, clone_path], stdout=PIPE)
+    if ('http' in src.repo[:4]) or ('github.com' in src.repo):
+        git = Popen(['git', 'clone', src.repo, clone_path], stdout=PIPE)
         git.wait()
         if git.returncode != 0:
             print('Error: Failed to clone repo')
@@ -302,13 +298,13 @@ def _install_plugin(source):
         'pyproject.toml': ['pip', 'install', '-e', '.']
     }
 
-    print(f'installing requirements from {source.deps}')
+    print(f'installing requirements from {src.deps}')
     plugin_path = clone_path
-    if source.subdir is not None:
-        plugin_path = os.path.join(clone_path, source.subdir)
+    if src.subdir is not None:
+        plugin_path = os.path.join(clone_path, src.subdir)
     os.chdir(plugin_path)
-    if source.deps is not None:
-        procedure = install_methods[source.deps]
+    if src.deps is not None:
+        procedure = install_methods[src.deps]
         pip = Popen(procedure, stdout=PIPE)
         pip.wait()
         if pip.returncode == 0:
@@ -467,42 +463,70 @@ def loadConfig():
     return reckless_conf
 
 
+def get_sources_file():
+    return Path.home().joinpath('.lightning', 'reckless', '.sources')
+
+
+def sources_from_file():
+    sources_file = get_sources_file()
+    read_sources = []
+    with open(sources_file, 'r') as f:
+        for src in f.readlines():
+            if len(src.strip()) > 0:
+                read_sources.append(src.strip())
+        # print('loaded sources:', repos)
+        return read_sources
+
+
 def loadSources():
-    # FIXME: next we'll add a flat file where we can store other git repos
-    # or local directories we would like to include in a search.
     # Look for designated sources file
-    # Parse for repos
-    return repos
+    sources_file = get_sources_file()
+    if not os.path.exists(sources_file):
+        print('Warning: Reckless requires write access')
+        Config(file_path=sources_file,
+               default_text='https://github.com/lightningd/plugins')
+        return ['https://github.com/lightningd/plugins']
+    return sources_from_file()
 
 
-def add_source(source):
+def add_source(src):
     """Additional git repositories, directories, etc. are passed here
     singly."""
     # Is it a file?
-    assert isinstance(source, str)
-    maybe_path = os.path.realpath(source)
+    assert isinstance(src, str)
+    maybe_path = os.path.realpath(src)
     if os.path.exists(maybe_path):
         # FIXME: This should handle either a directory or a git repo
         if os.path.isdir(maybe_path):
             print(f'Plugin source directory found: {maybe_path}')
-    elif 'github.com' in source:
-        print(f'Plugin github source repo passed: {source}')
-        print(source.split('github.com/'))
-        if len(source.split('github.com/')) == 2:
-            sub = source.split('github.com/')[-1]
-            print(f'url subdirectory: {sub}')
-    # FIXME: Implement this with persistent storage
+    elif 'github.com' in src:
+        # print(f'Plugin github source repo passed: {src}')
+        # print(src.split('github.com/'))
+        # if len(source.split('github.com/')) == 2:
+        #     sub = source.split('github.com/')[-1]
+        #     print(f'url subdirectory: {sub}')
+        #     with open(get_sources_file(), 'a+') as f:
+        #         f.write(f'\n{source}')
+        my_file = Config(file_path=get_sources_file(),
+                         default_text='https://github.com/lightningd/plugins')
+        my_file.editConfigFile(src, None)
 
 
-def remove_source(source):
-    assert isinstance(source, str)
-    print(f"source remove called: {source}")
-    # FIXME: Implement this.
+def remove_source(src):
+    assert isinstance(src, str)
+    if src in sources_from_file():
+        my_file = Config(file_path=get_sources_file(),
+                         default_text='https://github.com/lightningd/plugins')
+        my_file.editConfigFile(None, src)
+        print('plugin source removed')
+    else:
+        print(f'source not found: {src}')
 
 
 def list_source():
-    print("source list requested")
-    # FIXME: Implement this.
+    print("All plugin sources:")
+    for src in sources_from_file():
+        print(src)
 
 
 def source(cmd):
@@ -517,6 +541,11 @@ def source(cmd):
         list_source()
     else:
         print('unrecognized argument to reckless source: {cmd[0]}')
+
+
+def sources(cmd):
+    # alias to improve ux
+    source(cmd)
 
 
 if __name__ == '__main__':
@@ -538,7 +567,7 @@ if __name__ == '__main__':
 
     if hasattr(args, 'command'):
         if args.command in ['install', 'uninstall', 'search', 'update',
-                            'enable', 'disable', 'help', 'source']:
+                            'enable', 'disable', 'help', 'source', 'sources']:
             RECKLESS_CONFIG = loadConfig()
             RECKLESS_SOURCES = loadSources()
             globals()[args.command](args.target)
