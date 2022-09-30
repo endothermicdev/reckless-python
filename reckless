@@ -18,7 +18,7 @@ def py_entry_guesses(name):
     return [name, f'{name}.py', '__init__.py']
 
 
-class inst_info:
+class InstInfo:
     def __init__(self, name, url, git_url):
         self.name = name
         self.repo = url
@@ -90,7 +90,8 @@ def remove_dir(target):
     return False
 
 
-class Config(object):
+class Config():
+    """A class for procuring, reading and editing config files"""
     def obtain_config(self, config_path, default_text):
         """Return a config file from the desired location. Create one with
         default_text if it cannot be found."""
@@ -140,16 +141,6 @@ class Config(object):
                 if not line_exists:
                     conf_write.write(f'\n{addline}')
 
-    def enable_plugin(self, plugin_path):
-        """Handle persistent plugin loading via config"""
-        self.editConfigFile(f'plugin={plugin_path}',
-                            f'disable-plugin={plugin_path}')
-
-    def disable_plugin(self, plugin_path):
-        """Handle persistent plugin disabling via config"""
-        self.editConfigFile(f'disable-plugin={plugin_path}',
-                            f'plugin={plugin_path}')
-
     def __init__(self, file_path=None, default_text=None):
         if file_path is not None:
             # conf_fp is the sub-config file inherited by .lightning/config
@@ -162,10 +153,20 @@ class Config(object):
         self.content = self.obtain_config(self.conf_fp, default_text)
 
 
-class reckless_config(Config):
+class RecklessConfig(Config):
     """Reckless config (by default, specific to the bitcoin network only.)
-    This is inherited by the main lightningd config and contains all reckless
+    This is inherited by the lightningd config and contains all reckless
     maintained plugins."""
+
+    def enable_plugin(self, plugin_path):
+        """Handle persistent plugin loading via config"""
+        self.editConfigFile(f'plugin={plugin_path}',
+                            f'disable-plugin={plugin_path}')
+
+    def disable_plugin(self, plugin_path):
+        """Handle persistent plugin disabling via config"""
+        self.editConfigFile(f'disable-plugin={plugin_path}',
+                            f'plugin={plugin_path}')
 
     def __init__(self, file_path=None, default_text=None):
         if file_path is None:
@@ -179,7 +180,7 @@ class reckless_config(Config):
         self.reckless_dir = os.path.split(file_path)[0]
 
 
-class lightning_bitcoin_config(Config):
+class LightningBitcoinConfig(Config):
     """lightningd config specific to the bitcoin network. This is inherited by
     the main lightningd config and in turn, inherits bitcoin-reckless.conf."""
 
@@ -193,7 +194,7 @@ class lightning_bitcoin_config(Config):
         Config.__init__(self, file_path=file_path, default_text=default_text)
 
 
-class infer_install(object):
+class InferInstall():
     """Once a plugin is installed, we may need its directory and entrypoint"""
     def __init__(self, name):
         reck_contents = os.listdir(RECKLESS_CONFIG.reckless_dir)
@@ -217,7 +218,7 @@ def help(target):
 
 
 def _search_repo(name, url):
-    """look in given repo and, if found, populate inst_info"""
+    """look in given repo and, if found, populate InstInfo"""
     # Remove api subdomain, subdirectories, etc.
     repo = url.split('/')
     while '' in repo:
@@ -244,8 +245,8 @@ def _search_repo(name, url):
         return False
     # Repo is for this plugin
     if repo_name == name:
-        MyPlugin = inst_info(name, f'https://github.com/{repo_user}/'
-                             f'{repo_name}', api_url)
+        MyPlugin = InstInfo(name, f'https://github.com/{repo_user}/'
+                            f'{repo_name}', api_url)
         MyPlugin.get_inst_details()
         return MyPlugin
     # Repo contains multiple plugins?
@@ -254,13 +255,13 @@ def _search_repo(name, url):
             # Look for the rest of the install details
             # These are in lightningd/plugins directly
             if 'lightningd/plugins/' in x['html_url']:
-                MyPlugin = inst_info(name,
-                                     'https://github.com/lightningd/plugins',
-                                     x['git_url'])
+                MyPlugin = InstInfo(name,
+                                    'https://github.com/lightningd/plugins',
+                                    x['git_url'])
                 MyPlugin.subdir = x['name']
             # submodules from another github repo
             else:
-                MyPlugin = inst_info(name, x['html_url'], x['git_url'])
+                MyPlugin = InstInfo(name, x['html_url'], x['git_url'])
             MyPlugin.get_inst_details()
             return MyPlugin
     return False
@@ -417,7 +418,7 @@ def enable(plugin_name):
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
-    inst = infer_install(plugin_name)
+    inst = InferInstall(plugin_name)
     path = inst.entry
     if not os.path.exists(path):
         print('cannot find installed plugin at expected path {}'
@@ -452,7 +453,7 @@ def disable(plugin_name):
     if plugin_name is None:
         sys.stderr.write('Plugin name required.')
         sys.exit(1)
-    inst = infer_install(plugin_name)
+    inst = InferInstall(plugin_name)
     path = inst.entry
     if not os.path.exists(path):
         sys.stderr.write(f'Could not find plugin at {path}\n')
@@ -481,12 +482,12 @@ def disable(plugin_name):
 def load_config():
     """Initial directory discovery and config file creation."""
     # Reckless manages plugins here.
-    reckless_conf = reckless_config()
+    reckless_conf = RecklessConfig()
     if not reckless_conf:
         print('Error: reckless config file could not be written')
         sys.exit(1)
-    # This config file inherits the reckless_config.
-    bc_conf = lightning_bitcoin_config()
+    # This config file inherits the RecklessConfig.
+    bc_conf = LightningBitcoinConfig()
     if not bc_conf:
         print('Error: could not load/create .lightning/bitcoin config')
         sys.exit(1)
