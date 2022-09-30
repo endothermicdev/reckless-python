@@ -174,7 +174,7 @@ class reckless_config(Config):
         if default_text is None:
             default_text = '# This configuration file is managed by reckles' +\
                            's to activate and disable\n# reckless-installed' +\
-                           ' plugins\n'
+                           ' plugins\n\n'
         Config.__init__(self, file_path=file_path, default_text=default_text)
         self.reckless_dir = os.path.split(file_path)[0]
 
@@ -188,7 +188,7 @@ class lightning_bitcoin_config(Config):
             file_path = Path.home().joinpath('.lightning', 'bitcoin',
                                              'config')
         if default_text is None:
-            default_text = "# This config was autopopulated by reckless\n"
+            default_text = "# This config was autopopulated by reckless\n\n"
 
         Config.__init__(self, file_path=file_path, default_text=default_text)
 
@@ -288,9 +288,10 @@ def _install_plugin(src):
         git = Popen(['git', 'clone', src.repo, clone_path], stdout=PIPE)
         git.wait()
         if git.returncode != 0:
+            print(git.stdout.read().decode())
+            if os.path.exists(clone_path):
+                remove_dir(clone_path)
             print('Error: Failed to clone repo')
-            print(git.stdout.read())
-            remove_dir(clone_path)
             return False
     # Install dependencies via requirements.txt
     install_methods = {
@@ -399,6 +400,15 @@ def update(plugin_name):
         # FIXME: do something.
 
 
+def lightning_cli_available():
+    clncli = Popen(['lightning-cli'], stdout=PIPE, stderr=PIPE)
+    clncli.wait(timeout=1)
+    if clncli.returncode == 0:
+        return True
+    else:
+        return False
+
+
 def enable(plugin_name):
     """reckless enable <plugin>
     dynamically activates plugin and adds to config (persistent)"""
@@ -409,15 +419,28 @@ def enable(plugin_name):
         sys.exit(1)
     inst = infer_install(plugin_name)
     path = inst.entry
-    # FIXME: verify we can dynamically activate (lightning rpc is available)
-    print('activating {}'.format(plugin_name))
     if not os.path.exists(path):
         print('cannot find installed plugin at expected path {}'
               .format(path))
         sys.exit(1)
+    print('activating {}'.format(plugin_name))
+
+    if not lightning_cli_available():
+        # Config update should not be dependent upon lightningd running
+        RECKLESS_CONFIG.enable_plugin(path)
+        return
+
     clncli = Popen(['lightning-cli', 'plugin', 'start', path], stdout=PIPE)
-    clncli.wait()
-    RECKLESS_CONFIG.enable_plugin(path)
+    clncli.wait(timeout=3)
+    if clncli.returncode == 0:
+        RECKLESS_CONFIG.enable_plugin(path)
+    else:
+        print('reckless: plugin failed to start!')
+        err = eval(clncli.stdout.read().decode().replace('\n', ''))['message']
+        if ': already registered' in err:
+            RECKLESS_CONFIG.enable_plugin(path)
+        else:
+            print(err)
     sys.exit(clncli.returncode)
 
 
@@ -434,9 +457,13 @@ def disable(plugin_name):
     if not os.path.exists(path):
         sys.stderr.write(f'Could not find plugin at {path}\n')
         sys.exit(1)
+    if not lightning_cli_available():
+        RECKLESS_CONFIG.disable_plugin(path)
+        print(f'{plugin_name} disabled')
+        return
     clncli = Popen(['lightning-cli', 'plugin', 'stop', path],
                    stdout=PIPE, stderr=PIPE)
-    clncli.wait()
+    clncli.wait(timeout=3)
     output = json.loads(clncli.stdout.read().decode()
                         .replace('\n', '').replace('   ', ''))
     # print(output)
