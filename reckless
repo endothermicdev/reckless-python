@@ -91,16 +91,22 @@ def remove_dir(target):
 
 
 class Config():
-    """A class for procuring, reading and editing config files"""
+    """A generic class for procuring, reading and editing config files"""
     def obtain_config(self, config_path, default_text):
         """Return a config file from the desired location. Create one with
         default_text if it cannot be found."""
-        # print(f'config requested with path: \"{config_path}\"')
+        if isinstance(config_path, type(None)):
+            raise Exception("Generic config must be passed a config_path.")
+        assert isinstance(config_path, str)
         # FIXME: warn if reckless dir exists, but conf not found
         if os.path.exists(config_path):
             with open(config_path, 'r+') as f:
                 config_content = f.readlines()
             return config_content
+        print(f'config file not found: {config_path}')
+        confirm = input('press [Y] to create one now.\n')
+        if confirm.upper() != 'Y':
+            sys.exit(1)
         parent_path = os.path.split(config_path)[0]
         # Create up to one parent in the directory tree.
         if create_dir(1, parent_path):
@@ -128,28 +134,24 @@ class Config():
                         remove_these_lines.append(n)
                         continue
             with open(self.conf_fp, 'w') as conf_write:
-                line_exists = False
+                # no need to write if passed 'None'
+                line_exists = not bool(addline)
                 for n, l in enumerate(original):
                     if n not in remove_these_lines:
                         if n > 0:
                             conf_write.write(f'\n{l.strip()}')
                         else:
                             conf_write.write(l.strip())
-                        if addline == l or addline is None:
+                        if addline == l:
                             # addline is idempotent
                             line_exists = True
                 if not line_exists:
                     conf_write.write(f'\n{addline}')
 
     def __init__(self, file_path=None, default_text=None):
-        if file_path is not None:
-            # conf_fp is the sub-config file inherited by .lightning/config
-            self.conf_fp = file_path
-        else:
-            # default file path
-            self.conf_fp = Path.home().joinpath('.lightning', 'reckless',
-                                                'reckless.conf')
-            # self._check_lightning_config()
+        assert file_path is not None
+        assert default_text is not None
+        self.conf_fp = file_path
         self.content = self.obtain_config(self.conf_fp, default_text)
 
 
@@ -176,7 +178,8 @@ class RecklessConfig(Config):
             default_text = '# This configuration file is managed by reckles' +\
                            's to activate and disable\n# reckless-installed' +\
                            ' plugins\n\n'
-        Config.__init__(self, file_path=file_path, default_text=default_text)
+        Config.__init__(self, file_path=str(file_path),
+                        default_text=default_text)
         self.reckless_dir = os.path.split(file_path)[0]
 
 
@@ -190,8 +193,8 @@ class LightningBitcoinConfig(Config):
                                              'config')
         if default_text is None:
             default_text = "# This config was autopopulated by reckless\n\n"
-
-        Config.__init__(self, file_path=file_path, default_text=default_text)
+        Config.__init__(self, file_path=str(file_path),
+                        default_text=default_text)
 
 
 class InferInstall():
@@ -478,11 +481,18 @@ def disable(plugin_name):
     print(f'{plugin_name} disabled')
 
 
-# FIXME pass config in here if passed by argument.
-def load_config():
+def load_config(reckless_dir=None):
     """Initial directory discovery and config file creation."""
+    if reckless_dir is None:
+        reckless_dir = str(Path.home().joinpath('.lightning', 'reckless'))
+    else:
+        if not os.path.isabs(reckless_dir):
+            reckless_dir = os.path.join(os.getcwd(), reckless_dir)
+    # We apply to the bitcoin network configuration only for now.
+    # FIXME: Add support for regtest, etc.
+    reckless_conf_path = os.path.join(reckless_dir, 'bitcoin-reckless.conf')
     # Reckless manages plugins here.
-    reckless_conf = RecklessConfig()
+    reckless_conf = RecklessConfig(file_path=reckless_conf_path)
     if not reckless_conf:
         print('Error: reckless config file could not be written')
         sys.exit(1)
@@ -532,7 +542,7 @@ def add_source(src):
         if os.path.isdir(maybe_path):
             print(f'Plugin source directory found: {maybe_path}')
     elif 'github.com' in src:
-        my_file = Config(file_path=get_sources_file(),
+        my_file = Config(file_path=str(get_sources_file()),
                          default_text='https://github.com/lightningd/plugins')
         my_file.editConfigFile(src, None)
 
@@ -593,7 +603,7 @@ if __name__ == '__main__':
     if hasattr(args, 'command'):
         if args.command in ['install', 'uninstall', 'search', 'update',
                             'enable', 'disable', 'help', 'source', 'sources']:
-            RECKLESS_CONFIG = load_config()
+            RECKLESS_CONFIG = load_config(reckless_dir=args.reckless_dir)
             RECKLESS_SOURCES = loadSources()
             globals()[args.command](args.target)
             sys.exit(0)
