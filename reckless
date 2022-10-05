@@ -21,14 +21,16 @@ def py_entry_guesses(name):
 class InstInfo:
     def __init__(self, name, url, git_url):
         self.name = name
-        self.repo = url
-        self.git_url = git_url
+        self.repo = url         # Used for 'git clone'
+        self.git_url = git_url  # API access for github repos
         self.entry = None
         self.deps = None
         self.subdir = None
+        self.commit = None
 
     def __repr__(self):
-        return f'name: {self.name}\nrepo: {self.repo}\ngit: {self.git_url}'\
+        return f'<InstInfo object>\n'\
+               f'name: {self.name}\nrepo: {self.repo}\ngit: {self.git_url}'\
                f'\nentry:{self.entry}\ndepency source:{self.deps}'
 
     def get_inst_details(self):
@@ -245,6 +247,7 @@ def _search_repo(name, url):
             repo_name = repo[start+1]
             break
     # FIXME: Handle non-github repos.
+    # Get details from the github API.
     if repo_name is not None:
         api_url = f'https://api.github.com/repos/{repo_user}/' + \
                   f'{repo_name}/contents/'
@@ -272,6 +275,11 @@ def _search_repo(name, url):
             # submodules from another github repo
             else:
                 MyPlugin = InstInfo(name, x['html_url'], x['git_url'])
+                # Submodule URLs are appended with /tree/<commit hash>
+                if MyPlugin.repo.split('/')[-2] == 'tree':
+                    MyPlugin.commit = MyPlugin.repo.split('/')[-1]
+                    MyPlugin.repo = MyPlugin.repo.split('/tree/')[0]
+                    verbose(f'repo using commit: {MyPlugin.commit}')
             MyPlugin.get_inst_details()
             return MyPlugin
     return False
@@ -279,6 +287,7 @@ def _search_repo(name, url):
 
 def _install_plugin(src):
     """make sure the repo exists and clone it."""
+    verbose(f'Install requested from {src}.')
     if RECKLESS_CONFIG is None:
         print('error: reckless install directory unavailable')
         sys.exit(2)
@@ -311,6 +320,18 @@ def _install_plugin(src):
                 remove_dir(clone_path)
             print('Error: Failed to clone repo')
             return False
+    plugin_path = clone_path
+    if src.subdir is not None:
+        plugin_path = os.path.join(clone_path, src.subdir)
+    os.chdir(plugin_path)
+    if src.commit:
+        verbose(f"Checking out commit {src.commit}")
+        checkout = Popen(['git', 'checkout', src.commit],
+                         stdout=PIPE, stderr=PIPE)
+        checkout.wait()
+        if checkout.returncode != 0:
+            print(f'failed to checkout referenced commit {src.commit}')
+            return False
     # Install dependencies via requirements.txt
     install_methods = {
         'requirements.txt': ['pip', 'install', '-r', 'requirements.txt'],
@@ -318,10 +339,6 @@ def _install_plugin(src):
     }
 
     verbose(f'installing dependencies using {src.deps}')
-    plugin_path = clone_path
-    if src.subdir is not None:
-        plugin_path = os.path.join(clone_path, src.subdir)
-    os.chdir(plugin_path)
     if src.deps is not None:
         procedure = install_methods[src.deps]
         pip = Popen(procedure, stdout=PIPE)
@@ -332,11 +349,18 @@ def _install_plugin(src):
             print('error encountered installing dependencies')
             verbose(pip.stdout.read())
             return False
-    test = Popen([os.path.join(plugin_path, src.entry)], stdout=PIPE)
+    test = Popen([os.path.join(plugin_path, src.entry)],
+                 stdout=PIPE, stderr=PIPE, universal_newlines=True)
+    test_log = []
+    with test.stderr:
+        for line in test.stderr:
+            test_log.append(line.strip('\n'))
     test.wait()
     if test.returncode != 0:
+        verbose("plugin testing error:")
+        for line in test_log:
+            verbose(f'  {line}')
         print('plugin testing failed')
-        print(test.stdout)
         return False
 
     # Find this cute little plugin a forever home
