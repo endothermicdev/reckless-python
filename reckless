@@ -212,12 +212,19 @@ class InferInstall():
         for n in py_entry_guesses(name):
             if n in plug_contents:
                 self.entry = os.path.join(self.dir, n)
+                self.name = n
                 return
         raise Exception(f'plugin entrypoint not found in {self.dir}')
 
 
 def help(target):
     parser.print_help(sys.stdout)
+
+
+def verbose(*args):
+    if not IS_VERBOSE:
+        return
+    print(*args)
 
 
 def _search_repo(name, url):
@@ -285,14 +292,21 @@ def _install_plugin(src):
     inst_path = os.path.join(RECKLESS_CONFIG.reckless_dir,
                              src.name)
     if os.path.exists(clone_path):
-        print(f'{clone_path} already exists - deleting')
+        verbose(f'{clone_path} already exists - deleting')
         shutil.rmtree(clone_path)
     # clone git repository to /tmp/reckless-...
     if ('http' in src.repo[:4]) or ('github.com' in src.repo):
-        git = Popen(['git', 'clone', src.repo, clone_path], stdout=PIPE)
+        # Ugly, but interactively handling stderr gets hairy.
+        if IS_VERBOSE:
+            git = Popen(['git', 'clone',  src.repo, clone_path],
+                        stdout=PIPE)
+        else:
+            git = Popen(['git', 'clone',  src.repo, clone_path],
+                        stdout=PIPE, stderr=PIPE)
         git.wait()
         if git.returncode != 0:
-            print(git.stdout.read().decode())
+            if git.stderr:
+                print(git.stderr.read().decode())
             if os.path.exists(clone_path):
                 remove_dir(clone_path)
             print('Error: Failed to clone repo')
@@ -303,7 +317,7 @@ def _install_plugin(src):
         'pyproject.toml': ['pip', 'install', '-e', '.']
     }
 
-    print(f'installing requirements from {src.deps}')
+    verbose(f'installing dependencies using {src.deps}')
     plugin_path = clone_path
     if src.subdir is not None:
         plugin_path = os.path.join(clone_path, src.subdir)
@@ -313,10 +327,10 @@ def _install_plugin(src):
         pip = Popen(procedure, stdout=PIPE)
         pip.wait()
         if pip.returncode == 0:
-            print('requirements installed successfully')
+            print('dependencies installed successfully')
         else:
             print('error encountered installing dependencies')
-            print(pip.stdout.read())
+            verbose(pip.stdout.read())
             return False
     test = Popen([os.path.join(plugin_path, src.entry)], stdout=PIPE)
     test.wait()
@@ -343,7 +357,7 @@ def install(plugin_name):
     src = search([plugin_name])
 
     if src:
-        print(f'Retrieving {plugin_name} from {src.repo}')
+        verbose(f'Retrieving {plugin_name} from {src.repo}')
         if not _install_plugin(src):
             print('installation aborted')
             sys.exit(1)
@@ -364,7 +378,7 @@ def uninstall(plugin_name):
         print('Uninstalling plugin {}'.format(plugin_name))
         disable([plugin_name])
         plugin_dir = os.path.join(RECKLESS_CONFIG.reckless_dir, plugin_name)
-        print("looking for {}".format(plugin_dir))
+        verbose("looking for {}".format(plugin_dir))
         if remove_dir(plugin_dir):
             print(f"{plugin_name} uninstalled successfully.")
 
@@ -383,12 +397,11 @@ def search(plugin_name):
             ordered_repos.insert(0, r)
     for r in ordered_repos:
         p = _search_repo(plugin_name, r)
-        print(f'search result: {p}')
         if p:
-            print(f"found plugin repo:\n{p.repo}")
-            print(f"entry: {p.entry}")
+            print(f"found {p.name} in repo: {p.repo}")
+            verbose(f"entry: {p.entry}")
             if p.subdir:
-                print(f'sub-directory: {p.subdir}')
+                verbose(f'sub-directory: {p.subdir}')
             return p
     print(f'Unable to locate source for plugin {plugin_name}')
 
@@ -427,7 +440,7 @@ def enable(plugin_name):
         print('cannot find installed plugin at expected path {}'
               .format(path))
         sys.exit(1)
-    print('activating {}'.format(plugin_name))
+    verbose('activating {}'.format(plugin_name))
 
     if not lightning_cli_available():
         # Config update should not be dependent upon lightningd running
@@ -438,12 +451,15 @@ def enable(plugin_name):
     clncli.wait(timeout=3)
     if clncli.returncode == 0:
         RECKLESS_CONFIG.enable_plugin(path)
+        print('{} enabled'.format(plugin_name))
     else:
-        print('reckless: plugin failed to start!')
         err = eval(clncli.stdout.read().decode().replace('\n', ''))['message']
         if ': already registered' in err:
             RECKLESS_CONFIG.enable_plugin(path)
+            verbose(f'{inst.name} already registered with lightningd')
+            print('{} enabled'.format(plugin_name))
         else:
+            print(f'reckless: {inst.name} failed to start!')
             print(err)
     sys.exit(clncli.returncode)
 
@@ -598,6 +614,7 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--conf', help='sub-config file reckless uses '
                         'to enable/disable plugins (default: '
                         'reckless/reckless.conf)', default=None)
+    parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
 
     if hasattr(args, 'command'):
@@ -605,6 +622,7 @@ if __name__ == '__main__':
                             'enable', 'disable', 'help', 'source', 'sources']:
             RECKLESS_CONFIG = load_config(reckless_dir=args.reckless_dir)
             RECKLESS_SOURCES = loadSources()
+            IS_VERBOSE = bool(args.verbose)
             globals()[args.command](args.target)
             sys.exit(0)
         elif args.command == 'firstrun':
