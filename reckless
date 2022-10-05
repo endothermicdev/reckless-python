@@ -18,6 +18,10 @@ def py_entry_guesses(name):
     return [name, f'{name}.py', '__init__.py']
 
 
+def unsupported_entry(name):
+    return [f'{name}.go', f'{name}.sh']
+
+
 class InstInfo:
     def __init__(self, name, url, git_url):
         self.name = name
@@ -45,7 +49,7 @@ class InstInfo:
             tree = r.json()['tree']
         else:
             tree = r.json()
-        entry_guesses = [self.name, f'{self.name}.py', '__init__.py']
+        entry_guesses = py_entry_guesses(self.name)
         for g in entry_guesses:
             for f in tree:
                 if f['path'] == g:
@@ -53,6 +57,13 @@ class InstInfo:
                     break
             if self.entry is not None:
                 break
+        if self.entry is None:
+            for g in unsupported_entry(self.name):
+                for f in tree:
+                    if f['path'] == g:
+                        # FIXME: This should be easier to implement
+                        print(f'entrypoint {g} is not yet supported')
+                        return False
         dependency_info = ['requirements.txt', 'pyproject.toml']
         for d in dependency_info:
             for f in tree:
@@ -68,16 +79,16 @@ class InstInfo:
         return True
 
 
-def create_dir(r, d):
+def create_dir(r, directory):
     """Creation of a directory at path `d` with a maximum new dir depth `r`"""
-    if os.path.exists(d):
+    if os.path.exists(directory):
         return True
     elif r <= 0:
         return False
-    elif create_dir(r-1, os.path.split(d)[0]):
-        os.mkdir(d, 0o777)
-        print(f'created directory {d}')
-        if os.path.exists(d):
+    elif create_dir(r-1, os.path.split(directory)[0]):
+        os.mkdir(directory, 0o777)
+        print(f'created directory {directory}')
+        if os.path.exists(directory):
             return True
 
 
@@ -260,7 +271,8 @@ def _search_repo(name, url):
     if repo_name == name:
         MyPlugin = InstInfo(name, f'https://github.com/{repo_user}/'
                             f'{repo_name}', api_url)
-        MyPlugin.get_inst_details()
+        if not MyPlugin.get_inst_details():
+            return False
         return MyPlugin
     # Repo contains multiple plugins?
     for x in r.json():
@@ -280,7 +292,8 @@ def _search_repo(name, url):
                     MyPlugin.commit = MyPlugin.repo.split('/')[-1]
                     MyPlugin.repo = MyPlugin.repo.split('/tree/')[0]
                     verbose(f'repo using commit: {MyPlugin.commit}')
-            MyPlugin.get_inst_details()
+            if not MyPlugin.get_inst_details():
+                return False
             return MyPlugin
     return False
 
@@ -338,8 +351,8 @@ def _install_plugin(src):
         'pyproject.toml': ['pip', 'install', '-e', '.']
     }
 
-    verbose(f'installing dependencies using {src.deps}')
     if src.deps is not None:
+        verbose(f'installing dependencies using {src.deps}')
         procedure = install_methods[src.deps]
         pip = Popen(procedure, stdout=PIPE)
         pip.wait()
