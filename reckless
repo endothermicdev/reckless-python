@@ -229,7 +229,10 @@ class InferInstall():
 
 
 def help(target):
-    parser.print_help(sys.stdout)
+    if len(target) > 0:
+        print(globals()[target[0]].__doc__)
+    else:
+        parser.print_help(sys.stdout)
 
 
 def verbose(*args):
@@ -367,6 +370,7 @@ def _install_plugin(src):
         for line in test.stderr:
             test_log.append(line.strip('\n'))
     test.wait()
+    # FIXME: add noexec test/warning. Maybe try chmod entrypoint.
     if test.returncode != 0:
         verbose("plugin testing error:")
         for line in test_log:
@@ -383,7 +387,7 @@ def _install_plugin(src):
 
 def install(plugin_name):
     """reckless install <plugin>
-    downloads plugin from source repos and installs plugin"""
+    downloads plugin from source repos, installs and activates plugin"""
     assert isinstance(plugin_name, list)
     plugin_name = plugin_name[0]
     if plugin_name is None:
@@ -439,17 +443,6 @@ def search(plugin_name):
                 verbose(f'sub-directory: {p.subdir}')
             return p
     print(f'Unable to locate source for plugin {plugin_name}')
-
-
-def update(plugin_name):
-    """reckless update <plugin>
-    removes plugin and installs latest version"""
-    assert isinstance(plugin_name, list)
-    plugin_name = plugin_name[0]
-    # if len(sys.argv) > 2:
-    if plugin_name is not None:
-        print('updating plugin {}'.format(plugin_name))
-        # FIXME: do something.
 
 
 def lightning_cli_available():
@@ -578,8 +571,9 @@ def sources_from_file():
 
 
 def loadSources():
-    # Look for designated sources file
+    """Look for the repo sources file"""
     sources_file = get_sources_file()
+    # This would have been created if possible
     if not os.path.exists(sources_file):
         print('Warning: Reckless requires write access')
         Config(path=sources_file,
@@ -621,6 +615,11 @@ def list_source():
 
 
 def source(cmd):
+    """reckless source <add/remove/list>
+    reckless source add <github repository url>      adds a source to search
+    reckless source remove <github repository url>   removes a source
+    reckless source list                             lists all sources
+    """
     assert isinstance(cmd, list)
     if cmd[0] == 'add':
         for src in cmd[1:]:
@@ -642,7 +641,8 @@ def sources(cmd):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument(dest='command', help='install/uninstall/search/update',
+    parser.add_argument(dest='command', help='install/uninstall/search/enable'
+                        '/disable/source/help',
                         type=str)
     # Here we pass a list of argument in as target. This is useful for
     # subcommands (i.e., reckless source add <repo>) as well as for passing
@@ -662,8 +662,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if hasattr(args, 'command'):
-        if args.command in ['install', 'uninstall', 'search', 'update',
-                            'enable', 'disable', 'help', 'source', 'sources']:
+        if args.command in ['install', 'uninstall', 'search', 'enable',
+                            'disable', 'help', 'source', 'sources']:
             NETWORK = 'regtest' if args.regtest else 'bitcoin'
             LIGHTNING_DIR = Path(args.lightning)
             if args.reckless_dir:
@@ -674,10 +674,7 @@ if __name__ == '__main__':
                                           network=NETWORK)
             RECKLESS_SOURCES = loadSources()
             IS_VERBOSE = bool(args.verbose)
-            print(LIGHTNING_DIR)
             globals()[args.command](args.target)
             sys.exit(0)
-        elif args.command == 'firstrun':
-            load_config()
         else:
             print(f'{args.command}: command unrecognized')
