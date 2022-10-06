@@ -161,10 +161,10 @@ class Config():
                 if not line_exists:
                     conf_write.write(f'\n{addline}')
 
-    def __init__(self, file_path=None, default_text=None):
-        assert file_path is not None
+    def __init__(self, path=None, default_text=None):
+        assert path is not None
         assert default_text is not None
-        self.conf_fp = file_path
+        self.conf_fp = path
         self.content = self.obtain_config(self.conf_fp, default_text)
 
 
@@ -183,30 +183,29 @@ class RecklessConfig(Config):
         self.editConfigFile(f'disable-plugin={plugin_path}',
                             f'plugin={plugin_path}')
 
-    def __init__(self, file_path=None, default_text=None):
-        if file_path is None:
-            file_path = Path.home().joinpath('.lightning', 'reckless',
-                                             'bitcoin-reckless.conf')
+    def __init__(self, path=None, default_text=None):
+        if path is None:
+            path = Path.home().joinpath('.lightning', 'reckless',
+                                        'bitcoin-reckless.conf')
         if default_text is None:
             default_text = '# This configuration file is managed by reckles' +\
                            's to activate and disable\n# reckless-installed' +\
                            ' plugins\n\n'
-        Config.__init__(self, file_path=str(file_path),
-                        default_text=default_text)
-        self.reckless_dir = os.path.split(file_path)[0]
+        Config.__init__(self, path=str(path), default_text=default_text)
+        self.reckless_dir = os.path.split(path)[0]
 
 
 class LightningBitcoinConfig(Config):
     """lightningd config specific to the bitcoin network. This is inherited by
     the main lightningd config and in turn, inherits bitcoin-reckless.conf."""
 
-    def __init__(self, file_path=None, default_text=None):
-        if file_path is None:
-            file_path = Path.home().joinpath('.lightning', 'bitcoin',
-                                             'config')
+    def __init__(self, path=None, default_text=None):
+        if path is None:
+            path = Path.home().joinpath('.lightning', 'bitcoin',
+                                        'config')
         if default_text is None:
             default_text = "# This config was autopopulated by reckless\n\n"
-        Config.__init__(self, file_path=str(file_path),
+        Config.__init__(self, path=str(path),
                         default_text=default_text)
 
 
@@ -534,27 +533,33 @@ def disable(plugin_name):
     print(f'{plugin_name} disabled')
 
 
-def load_config(reckless_dir=None):
+def load_config(reckless_dir=None, network='bitcoin'):
     """Initial directory discovery and config file creation."""
     if reckless_dir is None:
         reckless_dir = str(Path.home().joinpath('.lightning', 'reckless'))
     else:
         if not os.path.isabs(reckless_dir):
             reckless_dir = os.path.join(os.getcwd(), reckless_dir)
-    # We apply to the bitcoin network configuration only for now.
-    # FIXME: Add support for regtest, etc.
-    reckless_conf_path = os.path.join(reckless_dir, 'bitcoin-reckless.conf')
+    # Reckless applies to the bitcoin network configuration by default.
+    if network == 'bitcoin':
+        reck_conf_path = os.path.join(reckless_dir, 'bitcoin-reckless.conf')
+        # This config file inherits the RecklessConfig.
+        net_conf = LightningBitcoinConfig()
+    elif network == 'regtest':
+        reck_conf_path = os.path.join(reckless_dir, 'regtest-reckless.conf')
+        regtest_path = Path.home().joinpath('.lightning', 'regtest', 'config')
+        # Actually the regtest network config
+        net_conf = LightningBitcoinConfig(path=regtest_path)
     # Reckless manages plugins here.
-    reckless_conf = RecklessConfig(file_path=reckless_conf_path)
+    reckless_conf = RecklessConfig(path=reck_conf_path)
     if not reckless_conf:
         print('Error: reckless config file could not be written')
         sys.exit(1)
-    # This config file inherits the RecklessConfig.
-    bc_conf = LightningBitcoinConfig()
-    if not bc_conf:
-        print('Error: could not load/create .lightning/bitcoin config')
+    if not net_conf:
+        print('Error: could not load or create the network specific lightningd'
+              ' config (default .lightning/bitcoin)')
         sys.exit(1)
-    bc_conf.editConfigFile(f'include {reckless_conf.conf_fp}', None)
+    net_conf.editConfigFile(f'include {reckless_conf.conf_fp}', None)
     return reckless_conf
 
 
@@ -578,7 +583,7 @@ def loadSources():
     sources_file = get_sources_file()
     if not os.path.exists(sources_file):
         print('Warning: Reckless requires write access')
-        Config(file_path=sources_file,
+        Config(path=sources_file,
                default_text='https://github.com/lightningd/plugins')
         return ['https://github.com/lightningd/plugins']
     return sources_from_file()
@@ -595,7 +600,7 @@ def add_source(src):
         if os.path.isdir(maybe_path):
             print(f'Plugin source directory found: {maybe_path}')
     elif 'github.com' in src:
-        my_file = Config(file_path=str(get_sources_file()),
+        my_file = Config(path=str(get_sources_file()),
                          default_text='https://github.com/lightningd/plugins')
         my_file.editConfigFile(src, None)
 
@@ -603,7 +608,7 @@ def add_source(src):
 def remove_source(src):
     assert isinstance(src, str)
     if src in sources_from_file():
-        my_file = Config(file_path=get_sources_file(),
+        my_file = Config(path=get_sources_file(),
                          default_text='https://github.com/lightningd/plugins')
         my_file.editConfigFile(None, src)
         print('plugin source removed')
@@ -651,13 +656,16 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--conf', help='sub-config file reckless uses '
                         'to enable/disable plugins (default: '
                         'reckless/reckless.conf)', default=None)
+    parser.add_argument('-r', '--regtest', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
 
     if hasattr(args, 'command'):
         if args.command in ['install', 'uninstall', 'search', 'update',
                             'enable', 'disable', 'help', 'source', 'sources']:
-            RECKLESS_CONFIG = load_config(reckless_dir=args.reckless_dir)
+            NETWORK = 'regtest' if args.regtest else 'bitcoin'
+            RECKLESS_CONFIG = load_config(reckless_dir=args.reckless_dir,
+                                          network=NETWORK)
             RECKLESS_SOURCES = loadSources()
             IS_VERBOSE = bool(args.verbose)
             globals()[args.command](args.target)
