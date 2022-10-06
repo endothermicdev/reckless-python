@@ -185,8 +185,8 @@ class RecklessConfig(Config):
 
     def __init__(self, path=None, default_text=None):
         if path is None:
-            path = Path.home().joinpath('.lightning', 'reckless',
-                                        'bitcoin-reckless.conf')
+            path = os.path.join(LIGHTNING_DIR, 'reckless',
+                                'bitcoin-reckless.conf')
         if default_text is None:
             default_text = '# This configuration file is managed by reckles' +\
                            's to activate and disable\n# reckless-installed' +\
@@ -201,8 +201,7 @@ class LightningBitcoinConfig(Config):
 
     def __init__(self, path=None, default_text=None):
         if path is None:
-            path = Path.home().joinpath('.lightning', 'bitcoin',
-                                        'config')
+            path = os.path.join(LIGHTNING_DIR, 'bitcoin', 'config')
         if default_text is None:
             default_text = "# This config was autopopulated by reckless\n\n"
         Config.__init__(self, path=str(path),
@@ -536,7 +535,7 @@ def disable(plugin_name):
 def load_config(reckless_dir=None, network='bitcoin'):
     """Initial directory discovery and config file creation."""
     if reckless_dir is None:
-        reckless_dir = str(Path.home().joinpath('.lightning', 'reckless'))
+        reckless_dir = str(os.path.join(LIGHTNING_DIR, 'reckless'))
     else:
         if not os.path.isabs(reckless_dir):
             reckless_dir = os.path.join(os.getcwd(), reckless_dir)
@@ -547,7 +546,7 @@ def load_config(reckless_dir=None, network='bitcoin'):
         net_conf = LightningBitcoinConfig()
     elif network == 'regtest':
         reck_conf_path = os.path.join(reckless_dir, 'regtest-reckless.conf')
-        regtest_path = Path.home().joinpath('.lightning', 'regtest', 'config')
+        regtest_path = os.path.join(LIGHTNING_DIR, 'regtest', 'config')
         # Actually the regtest network config
         net_conf = LightningBitcoinConfig(path=regtest_path)
     # Reckless manages plugins here.
@@ -564,7 +563,7 @@ def load_config(reckless_dir=None, network='bitcoin'):
 
 
 def get_sources_file():
-    return Path.home().joinpath('.lightning', 'reckless', '.sources')
+    return os.path.join(RECKLESS_DIR, '.sources')
 
 
 def sources_from_file():
@@ -650,12 +649,14 @@ if __name__ == '__main__':
     # lists of plugins to handle in sequence (to be implemented.)
     parser.add_argument(dest='target', nargs='*', default=None, help='target',
                         type=str)
+    # This default depends on the .lightning directory
     parser.add_argument('-d', '--reckless-dir',
                         help='specify a data directory for reckless to use',
                         type=str, default=None)
-    parser.add_argument('-c', '--conf', help='sub-config file reckless uses '
-                        'to enable/disable plugins (default: '
-                        'reckless/reckless.conf)', default=None)
+    parser.add_argument('-l', '--lightning',
+                        help='lightning data directory (default:~/.lightning)',
+                        type=str,
+                        default=Path.home().joinpath('.lightning'))
     parser.add_argument('-r', '--regtest', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
@@ -664,10 +665,16 @@ if __name__ == '__main__':
         if args.command in ['install', 'uninstall', 'search', 'update',
                             'enable', 'disable', 'help', 'source', 'sources']:
             NETWORK = 'regtest' if args.regtest else 'bitcoin'
-            RECKLESS_CONFIG = load_config(reckless_dir=args.reckless_dir,
+            LIGHTNING_DIR = Path(args.lightning)
+            if args.reckless_dir:
+                RECKLESS_DIR = args.reckless_dir
+            else:
+                RECKLESS_DIR = os.path.join(LIGHTNING_DIR, 'reckless')
+            RECKLESS_CONFIG = load_config(reckless_dir=RECKLESS_DIR,
                                           network=NETWORK)
             RECKLESS_SOURCES = loadSources()
             IS_VERBOSE = bool(args.verbose)
+            print(LIGHTNING_DIR)
             globals()[args.command](args.target)
             sys.exit(0)
         elif args.command == 'firstrun':
