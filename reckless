@@ -354,7 +354,7 @@ def _install_plugin(src):
     mypip = None
     for piptest in ['pip3', 'pip']:
         try:
-            test = Popen([piptest, '-V'])
+            test = Popen([piptest, '-V'], stdout=PIPE, stderr=PIPE)
             test.wait()
             if test.returncode == 0:
                 mypip = piptest
@@ -687,6 +687,8 @@ if __name__ == '__main__':
             NETWORK = 'regtest' if args.regtest else 'bitcoin'
             LIGHTNING_DIR = Path(args.lightning)
             LIGHTNING_CLI_CALL = ['lightning-cli']
+            if NETWORK != 'bitcoin':
+                LIGHTNING_CLI_CALL.append(f'--network={NETWORK}')
             if LIGHTNING_DIR != Path.home().joinpath('.lightning'):
                 LIGHTNING_CLI_CALL.append(f'--lightning-dir={LIGHTNING_DIR}')
             if args.reckless_dir:
