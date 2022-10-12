@@ -351,9 +351,22 @@ def _install_plugin(src):
             print(f'failed to checkout referenced commit {src.commit}')
             return False
     # Install dependencies via requirements.txt
+    mypip = None
+    for piptest in ['pip3', 'pip']:
+        try:
+            test = Popen([piptest, '-V'])
+            test.wait()
+            if test.returncode == 0:
+                mypip = piptest
+                break
+        except FileNotFoundError:
+            verbose(f'did not find {piptest}')
+            pass
+    if not mypip:
+        raise Exception('Please install pip!')
     install_methods = {
-        'requirements.txt': ['pip', 'install', '-r', 'requirements.txt'],
-        'pyproject.toml': ['pip', 'install', '-e', '.']
+        'requirements.txt': [mypip, 'install', '-r', 'requirements.txt'],
+        'pyproject.toml': [mypip, 'install', '-e', '.']
     }
 
     if src.deps is not None:
